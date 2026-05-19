@@ -41,6 +41,9 @@ while len(data) < raw_size:
 with open(raw_path, "wb") as f:
     f.write(data)
 
+with open(raw_path + ".dim", "w") as f:
+    f.write(f"{w}x{h}")
+
 for _ in range(10):
     line = port.readline().decode("utf-8", errors="replace").strip()
     if line == "SCREENSHOT_END":
@@ -55,7 +58,9 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-ffmpeg -y -f rawvideo -pixel_format rgb565le -video_size 480x480 \
+SIZE=$(cat "$TMPRAW.dim" 2>/dev/null || echo 480x320)
+rm -f "$TMPRAW.dim"
+ffmpeg -y -f rawvideo -pixel_format rgb565le -video_size "$SIZE" \
     -i "$TMPRAW" -update 1 -frames:v 1 "$OUTPUT" 2>/dev/null || true
 
 

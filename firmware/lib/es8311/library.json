@@ -1,0 +1,8 @@
+{
+  "name": "es8311",
+  "version": "1.0.0",
+  "description": "ES8311 codec driver (vendored from Waveshare ESP32-S3-Touch-LCD-3.5 demo)",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "build": { "srcDir": "src" }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "GFX Library for Arduino",
+  "version": "1.5.5-waveshare3.5",
+  "description": "Waveshare-bundled Arduino_GFX (ESP32-S3-Touch-LCD-3.5, non-B). Provides Arduino_ST7796 with Waveshare's panel init. Arduino_ESP32SPI.cpp patched for arduino-esp32 3.x (2-arg spiFrequencyToClockDiv). Unused QSPI/SPIDMA databus files excluded (they target the old core and aren't needed for the ST7796 SPI panel).",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "build": {
+    "srcFilter": [
+      "+<*>",
+      "-<databus/Arduino_ESP32SPIDMA.cpp>",
+      "-<databus/Arduino_ESP32QSPI.cpp>"
+    ]
+  }
+}

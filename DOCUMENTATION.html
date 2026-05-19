@@ -1,0 +1,371 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clawdmeter — ESP32-S3-Touch-LCD-3.5 Documentation</title>
+<style>
+:root{--fg:#1f1f1e;--bg:#faf9f5;--accent:#d97757;--code:#f0eee6;--bd:#dcd8cc;}
+*{box-sizing:border-box}
+body{font:16px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+ color:var(--fg);background:var(--bg);margin:0;padding:2.5rem 1rem}
+main{max-width:880px;margin:0 auto}
+h1,h2,h3{line-height:1.25;font-weight:650}
+h1{font-size:2rem;border-bottom:3px solid var(--accent);padding-bottom:.3em}
+h2{font-size:1.45rem;margin-top:2.2em;border-bottom:1px solid var(--bd);padding-bottom:.25em}
+h3{font-size:1.15rem;margin-top:1.6em}
+a{color:var(--accent)}
+code{background:var(--code);padding:.12em .4em;border-radius:4px;font-size:.88em;
+ font-family:'SF Mono',Menlo,Consolas,monospace}
+pre{background:var(--code);padding:1rem;border-radius:8px;overflow:auto;border:1px solid var(--bd)}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93em}
+th,td{border:1px solid var(--bd);padding:.5em .7em;text-align:left;vertical-align:top}
+th{background:var(--code)}
+tr:nth-child(even) td{background:#f3f1ea}
+blockquote{border-left:4px solid var(--accent);margin:1rem 0;padding:.3rem 1rem;
+ background:#f3f1ea;color:#55524a}
+hr{border:none;border-top:1px solid var(--bd);margin:2.5em 0}
+.footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--bd);
+ font-size:.85em;color:#8a877d}
+</style></head><body><main>
+<h1 id="clawdmeter-esp32-s3-touch-lcd-35-edition">Clawdmeter — ESP32-S3-Touch-LCD-3.5 Edition</h1>
+<p>A desk-side <strong>Claude Code usage monitor and event notifier</strong>.</p>
+<p>A small ESP32-S3 touchscreen sits on your desk and shows your live Anthropic
+usage (5-hour and weekly rate-limit utilization + reset countdowns), and
+<strong>reacts to your Claude Code sessions in real time</strong> — a coloured banner and a
+Warcraft-peasant voice line when a session starts, when you send a prompt, when
+Claude finishes, on errors, and when Claude needs your permission.</p>
+<blockquote>
+<p>This is a hardware fork of the upstream Clawdmeter, re-targeted to the
+<strong>Waveshare ESP32-S3-Touch-LCD-3.5 (non-"B")</strong> and re-architected to feed the
+device over <strong>USB serial</strong> (no Bluetooth), because it runs from <strong>WSL2</strong>.</p>
+</blockquote>
+<hr />
+<h2 id="1-hardware">1. Hardware</h2>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Part</th>
+<th>Bus / Pins</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Display</td>
+<td><strong>ST7796</strong> 320×480 IPS, run <strong>480×320 landscape</strong></td>
+<td>SPI: DC=3, CS=-1, SCK=5, MOSI=1, MISO=2; BL=6 (active-high)</td>
+</tr>
+<tr>
+<td>Touch</td>
+<td><strong>FocalTech FT6336</strong> capacitive</td>
+<td>I²C @ <strong>0x38</strong> (SensorLib <code>TouchDrvFT6X36</code>)</td>
+</tr>
+<tr>
+<td>I/O expander</td>
+<td><strong>TCA9554</strong></td>
+<td>I²C @ 0x20 — ch.1 = LCD reset pulse</td>
+</tr>
+<tr>
+<td>PMU</td>
+<td><strong>AXP2101</strong></td>
+<td>I²C @ 0x34 — LCD power rails + battery</td>
+</tr>
+<tr>
+<td>Audio codec</td>
+<td><strong>ES8311</strong> + <strong>NS4150B</strong> amp + integrated speaker</td>
+<td>I²C @ 0x18; I²S MCLK=12 BCLK=13 LRCK=15 DOUT=16</td>
+</tr>
+<tr>
+<td>IMU</td>
+<td><strong>QMI8658</strong></td>
+<td>I²C @ 0x6B (initialised, unused)</td>
+</tr>
+<tr>
+<td>Shared I²C</td>
+<td>—</td>
+<td><strong>SDA=8, SCL=7</strong></td>
+</tr>
+<tr>
+<td>Power/USB</td>
+<td>USB-C (USB-JTAG/serial), <code>/dev/ttyACM0</code></td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>No Bluetooth and no physical buttons are used</strong> — both were removed. The only
+input is the touchscreen (tap toggles the splash animation ↔ the dashboard).</p>
+<blockquote>
+<p><strong>Identifying your board.</strong> The genuine "3.5<strong>B</strong>" uses an AXS15231B QSPI panel
+with touch at 0x3B. This project is for the <strong>non-B 3.5</strong>: ST7796 over plain
+SPI, FocalTech touch at <strong>0x38</strong> (chip-ID reg 0xA8 = 0x11, 0xA3 = 0x64). If an
+I²C scan shows 0x38 and <em>no</em> 0x3B, you have this board.</p>
+</blockquote>
+<hr />
+<h2 id="2-architecture">2. Architecture</h2>
+<pre><code>                WSL2 (Linux)                         ESP32-S3 device
+  ┌───────────────────────────────────┐        ┌──────────────────────────┐
+  │ Claude Code  ──hooks──▶ clawd-event.sh ─┐   │ main.cpp serial router   │
+  │                                     │   ├──▶│  {&quot;ev&quot;:..}  → sound+banner│
+  │ claude-usage-serial.py ─────────────┘   │   │  {&quot;s&quot;:..}   → dashboard   │
+  │  (polls api.anthropic.com /v1/messages, │   │  &quot;screenshot&quot; → PNG dump  │
+  │   reads rate-limit headers, 60s)        │   │                          │
+  └───────────────────────────────────┘  USB   │ ST7796 LCD + FT6336 touch │
+                                         serial │ ES8311 audio (warcraft)  │
+                                                └──────────────────────────┘
+</code></pre>
+<ul>
+<li><strong>Transport:</strong> USB serial (<code>/dev/ttyACM0</code>), newline-delimited JSON. No BLE.</li>
+<li><strong>Usage:</strong> <code>claude-usage-serial.py</code> POSTs a minimal request to
+  <code>https://api.anthropic.com/v1/messages</code> and reads the
+  <code>anthropic-ratelimit-unified-5h/7d-*</code> response headers, every 60 s. Token is
+  read fresh from <code>~/.claude/.credentials.json</code> each poll (Claude Code keeps it
+  refreshed) — nothing secret is stored on the device. Usage updates are
+  <strong>silent</strong> (screen only).</li>
+<li><strong>Events:</strong> Claude Code hooks → <code>clawd-event.sh &lt;name&gt;</code> → <code>{"ev":"&lt;name&gt;"}</code> on
+  the serial port → firmware plays the matching <strong>warcraft voice clip</strong> (real
+  game-sounds audio, embedded as PCM) + a coloured banner for ~2.2 s.</li>
+</ul>
+<h3 id="firmware-layout-firmwaresrc">Firmware layout (<code>firmware/src/</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>main.cpp</code></td>
+<td>setup/loop, hardware init, serial-line router</td>
+</tr>
+<tr>
+<td><code>display_cfg.h</code></td>
+<td>pins, 480×320 landscape, extern objects</td>
+</tr>
+<tr>
+<td><code>ui.{h,cpp}</code></td>
+<td>splash + usage screens, event banner overlay</td>
+</tr>
+<tr>
+<td><code>splash.{h,cpp}</code></td>
+<td>20×20 pixel-art creature, 16× upscale, centred 320×320</td>
+</tr>
+<tr>
+<td><code>sound.{h,cpp}</code></td>
+<td>ES8311/I²S; per-event clip playback + boot beep</td>
+</tr>
+<tr>
+<td><code>sounds_warcraft.h</code></td>
+<td><strong>generated</strong> embedded PCM (see §7)</td>
+</tr>
+<tr>
+<td><code>power.{h,cpp}</code></td>
+<td>AXP2101 rails + battery</td>
+</tr>
+<tr>
+<td><code>imu.{h,cpp}</code></td>
+<td>QMI8658 (unused output)</td>
+</tr>
+<tr>
+<td><code>usage_rate.*</code>, <code>data.h</code>, <code>icons.h</code>, <code>logo.h</code>, <code>font_*.c</code></td>
+<td>dashboard support</td>
+</tr>
+<tr>
+<td><code>lib/</code></td>
+<td>vendored GFX 1.5.5 (Waveshare ST7796, SPI-patched), TCA9554, es8311</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-install-setup">3. Install / setup</h2>
+<h3 id="31-prerequisites">3.1 Prerequisites</h3>
+<ul>
+<li><strong>Windows + WSL2</strong> (Ubuntu). The board's USB only reaches WSL2 via <code>usbipd</code>.</li>
+<li><code>usbipd-win</code> on Windows (<code>winget install --exact dorssel.usbipd-win</code>, or the
+  MSI from <a href="https://github.com/dorssel/usbipd-win/releases">https://github.com/dorssel/usbipd-win/releases</a>).</li>
+<li><code>ffmpeg</code>, <code>python3</code> in WSL2 (for screenshots / regenerating sounds).</li>
+<li>PlatformIO. Not required system-wide — a venv lives at <code>./.piovenv</code>
+  (<code>python3 -m venv .piovenv &amp;&amp; .piovenv/bin/pip install platformio</code>).</li>
+<li>Claude Code logged in (so <code>~/.claude/.credentials.json</code> has an access token).</li>
+</ul>
+<h3 id="32-attach-the-device-to-wsl2">3.2 Attach the device to WSL2</h3>
+<p>In a <strong>Windows Administrator PowerShell</strong>:</p>
+<pre><code class="language-powershell">usbipd list                       # find the ESP32-S3 (VID 303a:1001), note BUSID
+usbipd bind   --busid &lt;BUSID&gt;     # one-time (persists)
+usbipd attach --wsl --busid &lt;BUSID&gt;   # re-run after every replug/reboot
+</code></pre>
+<p>Confirm in WSL2: <code>ls /dev/ttyACM0</code>.</p>
+<h3 id="33-build-flash-the-firmware">3.3 Build &amp; flash the firmware</h3>
+<pre><code class="language-bash">./.piovenv/bin/pio run -d firmware
+./.piovenv/bin/pio run -d firmware -t upload --upload-port /dev/ttyACM0
+</code></pre>
+<p>On boot you should hear a two-tone <strong>self-test beep</strong> and see the <strong>Usage</strong>
+dashboard (dashes until the daemon feeds it).</p>
+<h3 id="34-start-the-usage-daemon-wsl2">3.4 Start the usage daemon (WSL2)</h3>
+<pre><code class="language-bash">nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 &gt;/tmp/claude-usage.log 2&gt;&amp;1 &amp;
+tail -f /tmp/claude-usage.log     # should log 'sent: {&quot;s&quot;:..}' every ~60s
+</code></pre>
+<p>Stdlib-only (no pip deps). <code>PORT=/dev/ttyACM0 POLL=60</code> are overridable via env.</p>
+<h3 id="35-enable-claude-session-event-notifications">3.5 Enable Claude-session event notifications</h3>
+<p>Hooks live in <code>~/.claude/settings.json</code> (already added by this project, rtk
+<code>PreToolUse</code> preserved; backup at <code>settings.json.bak</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Claude Code hook</th>
+<th>Event</th>
+<th>Device reaction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SessionStart</code></td>
+<td>session-start</td>
+<td>"Ready to work!" — green banner</td>
+</tr>
+<tr>
+<td><code>UserPromptSubmit</code></td>
+<td>task-acknowledge</td>
+<td>"Work work." — blue banner</td>
+</tr>
+<tr>
+<td><code>Stop</code></td>
+<td>task-complete</td>
+<td>"Job's done!" — green banner</td>
+</tr>
+<tr>
+<td><code>PostToolUseFailure</code></td>
+<td>error</td>
+<td>"That was a mistake." — red banner</td>
+</tr>
+<tr>
+<td><code>Notification</code></td>
+<td>permission</td>
+<td>"What now?" — amber banner</td>
+</tr>
+</tbody>
+</table>
+<p>These mirror the <strong>game-sounds</strong> plugin's 5 categories, so the host plays the
+pack while the device shows a banner + plays the same-event voice. <strong>Restart
+Claude Code</strong> for hook changes to take effect (hooks load at session start). New
+sessions pick them up automatically. <code>tail -f /tmp/clawd-events.log</code> shows hooks
+firing.</p>
+<hr />
+<h2 id="4-daily-use">4. Daily use</h2>
+<ol>
+<li>(After reboot/replug) <code>usbipd attach --wsl --busid &lt;BUSID&gt;</code> in Windows admin PS.</li>
+<li><code>nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 &gt;/tmp/claude-usage.log 2&gt;&amp;1 &amp;</code></li>
+<li>Use Claude Code normally — the dashboard tracks usage; banners + voices fire
+   on session events.</li>
+</ol>
+<p>Tap the screen to toggle the <strong>splash creature</strong> ↔ the <strong>usage dashboard</strong>.</p>
+<hr />
+<h2 id="5-sounds">5. Sounds</h2>
+<ul>
+<li><strong>Event sounds</strong> are the <em>real</em> game-sounds <strong>warcraft</strong> clips (peasant voice
+  lines), decoded from the plugin's MP3s, loudness-normalised, and embedded in
+  flash as PCM. One iconic clip per event (the plugin rotates several; the device
+  uses a fixed one to stay self-contained).</li>
+<li><strong>Boot beep</strong>: synth two-tone, an audio self-test (if you hear it, the speaker
+  path works).</li>
+<li><strong>Usage refresh</strong>: silent by design. (It used to chime every 60 s — that was
+  the "random beeps even when idle"; removed.) A one-shot alert tone plays only
+  if your rate-limit status transitions OK → not-OK.</li>
+<li><strong>Volume</strong>: <code>#define SND_VOLUME 60</code> in <code>firmware/src/sound.cpp</code> (0–100). Clip
+  loudness target is set in the ffmpeg <code>loudnorm</code> step (§7).</li>
+</ul>
+<hr />
+<h2 id="6-troubleshooting">6. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Cause / fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No <code>/dev/ttyACM0</code></td>
+<td>usbipd detached — re-run <code>usbipd attach --wsl --busid &lt;BUSID&gt;</code> (Windows admin PS). Survives replug only after <code>bind</code>.</td>
+</tr>
+<tr>
+<td>Dashboard shows dashes</td>
+<td>Daemon not running / token missing. Check <code>/tmp/claude-usage.log</code>; ensure Claude Code is logged in.</td>
+</tr>
+<tr>
+<td>No event banners/sounds</td>
+<td>Hooks need a Claude Code <strong>restart</strong>. Check <code>/tmp/clawd-events.log</code>: <code>skip (no device)</code> = port detached; <code>sent</code> = delivered.</td>
+</tr>
+<tr>
+<td>Black screen</td>
+<td>Wrong board profile. This is <strong>ST7796 SPI</strong> — confirm I²C 0x38 (FT6336), not 0x3B. The <code>screenshot</code> cmd dumps the framebuffer and will look fine even if the panel is dark — not a panel test.</td>
+</tr>
+<tr>
+<td>AXP2101 init failed (serial)</td>
+<td>Intermittent flaky shared-I²C; only affects battery %/charging. Power-cycle usually clears it.</td>
+</tr>
+<tr>
+<td>Sounds inaudible but beep works</td>
+<td>Clip level too low — re-run §7 with a higher <code>loudnorm</code> target, or raise <code>SND_VOLUME</code>.</td>
+</tr>
+<tr>
+<td><code>screenshot.sh</code> won't run</td>
+<td>CRLF line endings (Windows/OneDrive). <code>sed -i 's/\r$//' screenshot.sh &amp;&amp; chmod +x screenshot.sh</code>.</td>
+</tr>
+<tr>
+<td>Build can't find <code>pio</code></td>
+<td>Use <code>./.piovenv/bin/pio</code> (not on PATH).</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-regenerating-the-embedded-sounds-eg-switch-game-sounds-pack">7. Regenerating the embedded sounds (e.g., switch game-sounds pack)</h2>
+<p>The device pack is baked into <code>firmware/src/sounds_warcraft.h</code>. To rebuild it
+from a different game-sounds pack:</p>
+<pre><code class="language-bash">PACK=warcraft   # any pack dir under the game-sounds plugin's sounds/
+SRC=~/.claude/plugins/cache/citedy/game-sounds/3.0.0/sounds/$PACK
+mkdir -p /tmp/wc
+# pick one clip per event (paths vary per pack), then for each:
+ffmpeg -nostdin -y -i &quot;$SRC/&lt;event&gt;/&lt;clip&gt;.mp3&quot; \
+  -af &quot;loudnorm=I=-12:TP=-1.0,alimiter=limit=0.97&quot; \
+  -ac 1 -ar 22050 -t 2.0 -f s16le /tmp/wc/&lt;event&gt;.pcm
+# then emit C arrays into firmware/src/sounds_warcraft.h
+# (snd_session_start / _task_acknowledge / _task_complete / _error / _permission,
+#  each with a matching &lt;name&gt;_len), and rebuild.
+</code></pre>
+<p><code>SND_RATE</code> in <code>sound.cpp</code> (22050) <strong>must</strong> equal the <code>-ar</code> rate, or playback is
+pitch-shifted.</p>
+<hr />
+<h2 id="8-history-why-it-was-hard-read-before-debugging-the-display">8. History / why it was hard (read before debugging the display)</h2>
+<p>The black-screen saga, condensed, so nobody repeats it:</p>
+<ol>
+<li>Upstream was an AMOLED-2.16 board. First ported to the Waveshare <strong>3.5B</strong>
+   (AXS15231B, QSPI). Screen stayed black through <em>every</em> permutation:
+   Canvas/raw, registry/bundled GFX, 40/80 MHz, every init table, SPI mode 0/3,
+   AXP rails, the literal factory ESP-IDF firmware.</li>
+<li>Red herrings chased and disproven: SPI mode 3, loose FPC / hardware fault,
+   Canvas flush. The <code>screenshot</code> command always looked perfect because it dumps
+   the LVGL framebuffer, <strong>not</strong> the panel — it never proved the panel was driven.</li>
+<li><strong>Root cause:</strong> wrong board variant. An I²C chip-ID probe found a <strong>FocalTech
+   FT6336 at 0x38</strong> and <em>nothing</em> at 0x3B (AXS touch). The board is the <strong>non-B
+   3.5</strong>: <strong>ST7796 over plain SPI</strong> + FT6336. Every driver attempt had targeted a
+   controller that isn't on the board.</li>
+<li>Re-ported display→ST7796/<code>Arduino_ESP32SPI</code> (HW rotation, no Canvas), touch→
+   FT6336/<code>TouchDrvFT6X36</code>, using Waveshare's bundled GFX <strong>1.5.5</strong> (its ST7796
+   init is the one that works) with a 2-arg <code>spiFrequencyToClockDiv</code> patch.
+   Worked immediately.</li>
+<li>WSL2 has no Bluetooth → replaced the BLE transport with USB serial. Added
+   ES8311 sound + hook-driven event banners/voices. Removed BLE + buttons.</li>
+</ol>
+<p><strong>Takeaways:</strong> verify the <em>actual</em> silicon (I²C chip IDs) before trusting a board
+name; a framebuffer screenshot is not a panel test; this machine's git mangles
+shell scripts to CRLF.</p>
+<hr />
+<h2 id="9-credits">9. Credits</h2>
+<ul>
+<li>Upstream Clawdmeter concept &amp; firmware: <strong>@hermannbjorgvin</strong>.</li>
+<li>Clawd pixel-art animation: <strong>@amaanbuilds</strong>.</li>
+<li>Event sound effects: the <strong>game-sounds</strong> Claude Code plugin (citedy) — warcraft pack.</li>
+<li>This ESP32-S3-Touch-LCD-3.5 port + USB-serial/sound/event work: Jean-Roch Bécart.</li>
+</ul>
+<div class="footer">Generated from DOCUMENTATION.md — Clawdmeter (ESP32-S3-Touch-LCD-3.5 edition).</div>
+</main></body></html>

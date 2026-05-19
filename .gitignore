@@ -15,6 +15,18 @@ tools/package-lock.json
 # Mac daemon venv
 daemon/.venv/
 
+# Local PlatformIO venv (created when pio isn't installed system-wide)
+.piovenv/
+
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Waveshare reference demos (399MB incl. a >100MB zip — local reference only,
+# not part of the project; download from the Waveshare wiki if needed)
+device/
+
+# Build artifacts / scratch
+*.elf
+*.map
+firmware/.pio/
