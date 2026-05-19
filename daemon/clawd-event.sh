@@ -1,5 +1,5 @@
 #!/bin/bash
-# Send a Claude-session event to the Clawdmeter device over USB serial.
+# Send a Claude-session event to the Cmeter3.5 device over USB serial.
 # Used by Claude Code hooks. Mirrors the game-sounds plugin's event set:
 #   session-start | task-acknowledge | task-complete | error | permission
 #

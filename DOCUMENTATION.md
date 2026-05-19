@@ -1,4 +1,10 @@
-# Clawdmeter — ESP32-S3-Touch-LCD-3.5 Edition
+# Cmeter3.5 — ESP32-S3-Touch-LCD-3.5
+
+> **A fork of [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) by
+> [@hermannbjorgvin](https://github.com/HermannBjorgvin).** Hardware:
+> [Waveshare ESP32-S3-Touch-LCD-3.5](https://www.waveshare.com/esp32-s3-touch-lcd-3.5.htm)
+> ([wiki](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.5) ·
+> [schematic](https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.5/ESP32-S3-Touch-LCD-3.5-Schematic.pdf)).
 
 A desk-side **Claude Code usage monitor and event notifier**.
 
