@@ -1,0 +1,35 @@
+# systemd *user* unit — runs the USB-serial usage daemon at WSL2 boot.
+#
+# Install (paths are baked in below; regenerate if you cloned elsewhere — the
+# repo install.sh / DOCUMENTATION.md §3.4 has a one-liner that does this for you):
+#
+#   mkdir -p ~/.config/systemd/user
+#   sed "s#__REPO__#$(pwd)#g" daemon/clawd-usage.service \
+#       > ~/.config/systemd/user/clawd-usage.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now clawd-usage.service
+#   loginctl enable-linger "$USER"        # start at boot w/o an open terminal
+#
+# Status / logs:
+#   systemctl --user status clawd-usage.service
+#   journalctl --user -u clawd-usage.service -f
+
+[Unit]
+Description=Clawdmeter usage daemon (Anthropic rate-limit poll -> ESP32 USB serial)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+ExecStart=/usr/bin/python3 __REPO__/daemon/claude-usage-serial.py /dev/ttyACM0
+# Daemon loops internally and never exits on its own; Restart is a crash net.
+Restart=always
+RestartSec=10
+# /dev/ttyACM0 comes and goes with usbipd — don't give up after N restarts.
+StartLimitIntervalSec=0
+StandardOutput=append:/tmp/claude-usage.log
+StandardError=append:/tmp/claude-usage.log
+
+[Install]
+WantedBy=default.target

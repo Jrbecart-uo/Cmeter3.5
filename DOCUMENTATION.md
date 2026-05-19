@@ -116,6 +116,23 @@ usbipd attach --wsl --busid <BUSID>   # re-run after every replug/reboot
 
 Confirm in WSL2: `ls /dev/ttyACM0`.
 
+**Recommended — auto-attach (no more manual re-attach).** The ESP32-S3 USB-JTAG
+re-enumerates on every flash and every reboot, so the manual `attach` above is
+the #1 reason "the device stops updating". Run the bundled script **once** in an
+Administrator PowerShell (path is the WSL repo, e.g.
+`\\wsl$\Ubuntu\home\jbecart\tmp\Clawdmeter`):
+
+```powershell
+.\usbipd-autoattach.ps1                 # default device 303a:1001
+.\usbipd-autoattach.ps1 -HardwareId 303a:4001   # other board revision
+.\usbipd-autoattach.ps1 -Remove         # tear down
+```
+
+It binds the device (pinned by hardware-id, not busid) and registers a
+Scheduled Task that runs `usbipd attach --auto-attach` at logon. After this:
+replug → auto-reattaches; reboot → the task restarts the watcher. You never
+touch `usbipd attach` by hand again.
+
 ### 3.3 Build & flash the firmware
 
 ```bash
@@ -128,10 +145,38 @@ dashboard (dashes until the daemon feeds it).
 
 ### 3.4 Start the usage daemon (WSL2)
 
+Quick / one-off:
+
 ```bash
 nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 >/tmp/claude-usage.log 2>&1 &
 tail -f /tmp/claude-usage.log     # should log 'sent: {"s":..}' every ~60s
 ```
+
+**Recommended — systemd user service (survives reboot).** The `nohup` daemon
+dies on WSL shutdown and won't restart itself; if usage freezes while event
+banners still fire, this daemon is the thing that died. Install it once
+(WSL2 here has `systemd=true`):
+
+```bash
+mkdir -p ~/.config/systemd/user
+sed "s#__REPO__#$(pwd)#g" daemon/clawd-usage.service \
+    > ~/.config/systemd/user/clawd-usage.service
+systemctl --user daemon-reload
+systemctl --user enable --now clawd-usage.service
+loginctl enable-linger "$USER"     # start at WSL boot w/o an open terminal
+```
+
+Manage it:
+
+```bash
+systemctl --user status clawd-usage.service
+journalctl --user -u clawd-usage.service -f      # or tail /tmp/claude-usage.log
+systemctl --user restart clawd-usage.service
+```
+
+Run **either** the `nohup` form **or** the service, not both (two pollers
+double-write the port — the service is the keeper). `Restart=always` brings it
+back if it crashes; it rides out `/dev/ttyACM0` coming and going with usbipd.
 
 Stdlib-only (no pip deps). `PORT=/dev/ttyACM0 POLL=60` are overridable via env.
 
@@ -158,8 +203,12 @@ firing.
 
 ## 4. Daily use
 
-1. (After reboot/replug) `usbipd attach --wsl --busid <BUSID>` in Windows admin PS.
-2. `nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 >/tmp/claude-usage.log 2>&1 &`
+1. Device attach: nothing to do if you ran `usbipd-autoattach.ps1` (§3.2);
+   otherwise `usbipd attach --wsl --busid <BUSID>` in a Windows admin PS after
+   each reboot/replug.
+2. Daemon: nothing to do if you installed the systemd user service (§3.4) —
+   it auto-starts at boot. Otherwise `nohup python3
+   daemon/claude-usage-serial.py /dev/ttyACM0 >/tmp/claude-usage.log 2>&1 &`
 3. Use Claude Code normally — the dashboard tracks usage; banners + voices fire
    on session events.
 
@@ -187,8 +236,8 @@ Tap the screen to toggle the **splash creature** ↔ the **usage dashboard**.
 
 | Symptom | Cause / fix |
 |---|---|
-| No `/dev/ttyACM0` | usbipd detached — re-run `usbipd attach --wsl --busid <BUSID>` (Windows admin PS). Survives replug only after `bind`. |
-| Dashboard shows dashes | Daemon not running / token missing. Check `/tmp/claude-usage.log`; ensure Claude Code is logged in. |
+| No `/dev/ttyACM0` (usage stops updating) | usbipd detached (replug/reboot/flash re-enumerated the device). One-off fix: `usbipd attach --wsl --busid <BUSID>` (Windows admin PS). Permanent fix: run `usbipd-autoattach.ps1` once (§3.2). Then restart the daemon (next row). |
+| Dashboard stale / shows dashes (but event banners still work) | Usage daemon died — event banners are hook-driven and independent, so they keep working while polling is dead. `systemctl --user restart clawd-usage.service` (or check `/tmp/claude-usage.log`); ensure Claude Code is logged in for the token. |
 | No event banners/sounds | Hooks need a Claude Code **restart**. Check `/tmp/clawd-events.log`: `skip (no device)` = port detached; `sent` = delivered. |
 | Black screen | Wrong board profile. This is **ST7796 SPI** — confirm I²C 0x38 (FT6336), not 0x3B. The `screenshot` cmd dumps the framebuffer and will look fine even if the panel is dark — not a panel test. |
 | AXP2101 init failed (serial) | Intermittent flaky shared-I²C; only affects battery %/charging. Power-cycle usually clears it. |
