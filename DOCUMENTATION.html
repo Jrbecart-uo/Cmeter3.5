@@ -12,6 +12,8 @@ h1{font-size:2rem;border-bottom:3px solid var(--accent);padding-bottom:.3em}
 h2{font-size:1.45rem;margin-top:2.2em;border-bottom:1px solid var(--bd);padding-bottom:.25em}
 h3{font-size:1.15rem;margin-top:1.6em}
 a{color:var(--accent)}
+img{max-width:480px;width:100%;display:block;border:1px solid var(--bd);border-radius:10px;margin:1rem 0}
+em{color:#55524a}
 code{background:var(--code);padding:.12em .4em;border-radius:4px;font-size:.88em;
  font-family:'SF Mono',Menlo,Consolas,monospace}
 pre{background:var(--code);padding:1rem;border-radius:8px;overflow:auto;border:1px solid var(--bd)}
@@ -45,6 +47,10 @@ Claude finishes, on errors, and when Claude needs your permission.</p>
 <strong>Waveshare ESP32-S3-Touch-LCD-3.5 (non-"B")</strong> and re-architected to feed the
 device over <strong>USB serial</strong> (no Bluetooth), because it runs from <strong>WSL2</strong>.</p>
 </blockquote>
+<p><img alt="Cmeter3.5 usage dashboard — Current/Weekly utilization with reset countdowns" src="screenshot.png" /></p>
+<p><em>The 480×320 landscape Usage dashboard (live capture): current 5-hour and weekly
+rate-limit utilization with reset countdowns. Tap the screen to toggle the
+pixel-art Clawd splash.</em></p>
 <hr />
 <h2 id="1-hardware">1. Hardware</h2>
 <table>
@@ -342,32 +348,7 @@ ffmpeg -nostdin -y -i &quot;$SRC/&lt;event&gt;/&lt;clip&gt;.mp3&quot; \
 <p><code>SND_RATE</code> in <code>sound.cpp</code> (22050) <strong>must</strong> equal the <code>-ar</code> rate, or playback is
 pitch-shifted.</p>
 <hr />
-<h2 id="8-history-why-it-was-hard-read-before-debugging-the-display">8. History / why it was hard (read before debugging the display)</h2>
-<p>The black-screen saga, condensed, so nobody repeats it:</p>
-<ol>
-<li>Upstream was an AMOLED-2.16 board. First ported to the Waveshare <strong>3.5B</strong>
-   (AXS15231B, QSPI). Screen stayed black through <em>every</em> permutation:
-   Canvas/raw, registry/bundled GFX, 40/80 MHz, every init table, SPI mode 0/3,
-   AXP rails, the literal factory ESP-IDF firmware.</li>
-<li>Red herrings chased and disproven: SPI mode 3, loose FPC / hardware fault,
-   Canvas flush. The <code>screenshot</code> command always looked perfect because it dumps
-   the LVGL framebuffer, <strong>not</strong> the panel — it never proved the panel was driven.</li>
-<li><strong>Root cause:</strong> wrong board variant. An I²C chip-ID probe found a <strong>FocalTech
-   FT6336 at 0x38</strong> and <em>nothing</em> at 0x3B (AXS touch). The board is the <strong>non-B
-   3.5</strong>: <strong>ST7796 over plain SPI</strong> + FT6336. Every driver attempt had targeted a
-   controller that isn't on the board.</li>
-<li>Re-ported display→ST7796/<code>Arduino_ESP32SPI</code> (HW rotation, no Canvas), touch→
-   FT6336/<code>TouchDrvFT6X36</code>, using Waveshare's bundled GFX <strong>1.5.5</strong> (its ST7796
-   init is the one that works) with a 2-arg <code>spiFrequencyToClockDiv</code> patch.
-   Worked immediately.</li>
-<li>WSL2 has no Bluetooth → replaced the BLE transport with USB serial. Added
-   ES8311 sound + hook-driven event banners/voices. Removed BLE + buttons.</li>
-</ol>
-<p><strong>Takeaways:</strong> verify the <em>actual</em> silicon (I²C chip IDs) before trusting a board
-name; a framebuffer screenshot is not a panel test; this machine's git mangles
-shell scripts to CRLF.</p>
-<hr />
-<h2 id="9-credits">9. Credits</h2>
+<h2 id="8-credits">8. Credits</h2>
 <ul>
 <li>Upstream Clawdmeter concept &amp; firmware: <strong>@hermannbjorgvin</strong>.</li>
 <li>Clawd pixel-art animation: <strong>@amaanbuilds</strong>.</li>

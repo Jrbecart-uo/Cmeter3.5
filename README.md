@@ -6,6 +6,8 @@ weekly utilization + reset countdowns) and reacts to your Claude Code sessions
 in real time with a coloured banner and a Warcraft-peasant voice line
 (*"Ready to work!"*, *"Work work."*, *"Job's done!"*, …).
 
+![Cmeter3.5 usage dashboard](screenshot.png)
+
 > **This is a fork.** Cmeter3.5 is a hardware fork of
 > **[Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) by
 > [@hermannbjorgvin](https://github.com/HermannBjorgvin)**, re-targeted from the

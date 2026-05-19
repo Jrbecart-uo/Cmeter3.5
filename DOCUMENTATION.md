@@ -18,6 +18,12 @@ Claude finishes, on errors, and when Claude needs your permission.
 > **Waveshare ESP32-S3-Touch-LCD-3.5 (non-"B")** and re-architected to feed the
 > device over **USB serial** (no Bluetooth), because it runs from **WSL2**.
 
+![Cmeter3.5 usage dashboard — Current/Weekly utilization with reset countdowns](screenshot.png)
+
+*The 480×320 landscape Usage dashboard (live capture): current 5-hour and weekly
+rate-limit utilization with reset countdowns. Tap the screen to toggle the
+pixel-art Clawd splash.*
+
 ---
 
 ## 1. Hardware
@@ -215,35 +221,7 @@ pitch-shifted.
 
 ---
 
-## 8. History / why it was hard (read before debugging the display)
-
-The black-screen saga, condensed, so nobody repeats it:
-
-1. Upstream was an AMOLED-2.16 board. First ported to the Waveshare **3.5B**
-   (AXS15231B, QSPI). Screen stayed black through *every* permutation:
-   Canvas/raw, registry/bundled GFX, 40/80 MHz, every init table, SPI mode 0/3,
-   AXP rails, the literal factory ESP-IDF firmware.
-2. Red herrings chased and disproven: SPI mode 3, loose FPC / hardware fault,
-   Canvas flush. The `screenshot` command always looked perfect because it dumps
-   the LVGL framebuffer, **not** the panel — it never proved the panel was driven.
-3. **Root cause:** wrong board variant. An I²C chip-ID probe found a **FocalTech
-   FT6336 at 0x38** and *nothing* at 0x3B (AXS touch). The board is the **non-B
-   3.5**: **ST7796 over plain SPI** + FT6336. Every driver attempt had targeted a
-   controller that isn't on the board.
-4. Re-ported display→ST7796/`Arduino_ESP32SPI` (HW rotation, no Canvas), touch→
-   FT6336/`TouchDrvFT6X36`, using Waveshare's bundled GFX **1.5.5** (its ST7796
-   init is the one that works) with a 2-arg `spiFrequencyToClockDiv` patch.
-   Worked immediately.
-5. WSL2 has no Bluetooth → replaced the BLE transport with USB serial. Added
-   ES8311 sound + hook-driven event banners/voices. Removed BLE + buttons.
-
-**Takeaways:** verify the *actual* silicon (I²C chip IDs) before trusting a board
-name; a framebuffer screenshot is not a panel test; this machine's git mangles
-shell scripts to CRLF.
-
----
-
-## 9. Credits
+## 8. Credits
 
 - Upstream Clawdmeter concept & firmware: **@hermannbjorgvin**.
 - Clawd pixel-art animation: **@amaanbuilds**.
