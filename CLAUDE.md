@@ -19,8 +19,9 @@ Read this first, then `DOCUMENTATION.md` for the full install/troubleshooting gu
   landscape (no Canvas). Backlight = GPIO **6** (active high, plain digitalWrite).
 - **Touch: FT6336** @ I2C **0x38**, via SensorLib `TouchDrvFT6X36`.
 - **TCA9554** I/O expander @ 0x20 — channel 1 pulses the LCD reset before `gfx->begin()`.
-- **AXP2101** PMU @ 0x34 — `power_init()` enables the LCD power rails (factory sequence) +
-  battery %. Intermittently fails to init on some boots (flaky shared I2C); battery-only impact.
+- **AXP2101** PMU @ 0x34 — `power_init()` enables the LCD power rails (factory sequence)
+  ONLY. No battery readout (device is USB-only, no LiPo). Init intermittently fails on
+  some boots (flaky shared I2C) → screen black that boot; power-cycle clears it.
 - **ES8311** codec @ 0x18 + **NS4150B** amp (HW-enabled, no GPIO) + integrated speaker.
   I2S: MCLK=12, BCLK=13, LRCK=15, DOUT=16.
 - **QMI8658** IMU @ 0x6B — init'd, unused (fixed landscape).
@@ -38,7 +39,7 @@ ui.{h,cpp}      — splash + usage screens (480×320 landscape) + event banner o
 splash.{h,cpp}  — 20×20 pixel-art creature, 16× → 320×320 centred
 sound.{h,cpp}   — ES8311/I2S; embedded warcraft voice clips per event + boot beep
 sounds_warcraft.h — generated PCM (do NOT hand-edit; regen via ffmpeg+python, see DOCUMENTATION)
-power.{h,cpp}   — AXP2101 rails + battery
+power.{h,cpp}   — AXP2101 LCD power rails only (no battery; USB-only device)
 imu.{h,cpp}     — QMI8658 (unused output)
 data.h / usage_rate.* / icons.h / logo.h / font_*.c
 lib/            — vendored: GFX_Library_for_Arduino 1.5.5 (Waveshare ST7796, SPI patched),
@@ -94,9 +95,21 @@ not proof the physical panel is lit (that lesson cost hours — see history). Bo
 6. **Repo hygiene.** `device/` (399MB, >100MB zip) is git-ignored — never commit it.
    `firmware/lib/` IS committed (required vendored deps). `.piovenv/` ignored.
 
-## State (2026-05-19)
+## State (2026-05-19) — shipped
+
+Project renamed **Cmeter3.5**; pushed to **github.com/Jrbecart-uo/Cmeter3.5** (SSH deploy
+key pinned via repo `core.sshCommand`, so `git push` from this repo just works). Docs:
+`README.md` (fork-of-Clawdmeter credit + Waveshare links + screenshot), `DOCUMENTATION.md`
++ `.html`, this file.
 
 Fully working: ST7796 display, FT6336 touch, USB-serial live usage (reset times correct),
 per-event colored banners + real game-sounds **warcraft** voice clips (one iconic clip/event,
-embedded PCM), boot self-test beep. BLE + buttons removed. Open: AXP2101 init is intermittent
-(battery-only); attribution credit line was on the deleted BT screen (relocate if wanted).
+embedded PCM), boot self-test beep. BLE + buttons removed. Battery indicator removed
+(USB-only). `power.cpp` = rails-only. Usage polls silent (sound = events + boot only).
+
+Open / notes: AXP2101 init intermittently fails on some boots (black screen that boot;
+power-cycle fixes — flaky shared I2C, no clean fix found). The "@hermannbjorgvin / Clawd
+by @amaanbuilds" attribution line was on the deleted Bluetooth screen — currently not shown
+on-device anywhere (relocate to splash/footer if wanted; credit IS in README/DOCUMENTATION).
+Commit author email is `jbecart@uottawa.ca` (public in history) — user offered a noreply
+rewrite, deferred. `device/` (399MB Waveshare demo) git-ignored.
