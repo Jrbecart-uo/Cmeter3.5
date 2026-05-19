@@ -1,7 +1,6 @@
 #pragma once
 
+// Enables the AXP2101 power rails that feed the ST7796 LCD panel.
+// Must run before the TCA9554 reset pulse / gfx->begin(). The device is
+// USB-powered only (no LiPo, no buttons) so there is no battery readout.
 void power_init(void);
-void power_tick(void);
-int  power_battery_pct(void);    // 0-100, or -1 if no battery
-bool power_is_charging(void);
-bool power_pwr_pressed(void);    // true once per AXP2101 PWR button short-press

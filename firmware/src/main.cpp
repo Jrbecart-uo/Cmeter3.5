@@ -266,9 +266,6 @@ void setup() {
     // Build dashboard
     ui_init();
 
-    // Show initial battery status
-    ui_update_battery(power_battery_pct(), power_is_charging());
-
     // Boot straight to the Usage dashboard (no buttons; tap the screen to
     // toggle the splash animation).
     ui_show_screen(SCREEN_USAGE);
@@ -281,20 +278,8 @@ void loop() {
     lv_timer_handler();
     ui_tick_anim();
     ui_event_tick();
-    power_tick();
     imu_tick();
     splash_tick();
-
-    // Update battery indicator
-    static int last_pct = -2;
-    static bool last_charging = false;
-    int pct = power_battery_pct();
-    bool charging = power_is_charging();
-    if (pct != last_pct || charging != last_charging) {
-        last_pct = pct;
-        last_charging = charging;
-        ui_update_battery(pct, charging);
-    }
 
     // Usage payloads + session events arrive here over USB serial.
     check_serial_cmd();

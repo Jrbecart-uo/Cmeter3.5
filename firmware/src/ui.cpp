@@ -53,10 +53,8 @@ static lv_obj_t* lbl_weekly_label;
 static lv_obj_t* lbl_weekly_reset;
 static lv_obj_t* lbl_anim;
 
-// ---- Battery indicator (shared, on top) ----
-static lv_obj_t* battery_img;
+// ---- Logo (shared, on top) ----
 static lv_obj_t* logo_img;
-static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 
 // ---- Shared ----
 static lv_image_dsc_t logo_dsc;
@@ -209,14 +207,6 @@ static lv_obj_t* make_pill(lv_obj_t* parent, const char* text) {
     return lbl;
 }
 
-// ---- Battery icon initialization ----
-static void init_battery_icons(void) {
-    init_icon_dsc_rgb565a8(&battery_dscs[0], ICON_BATTERY_W, ICON_BATTERY_H, icon_battery_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[1], ICON_BATTERY_LOW_W, ICON_BATTERY_LOW_H, icon_battery_low_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[2], ICON_BATTERY_MEDIUM_W, ICON_BATTERY_MEDIUM_H, icon_battery_medium_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[3], ICON_BATTERY_FULL_W, ICON_BATTERY_FULL_H, icon_battery_full_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[4], ICON_BATTERY_CHARGING_W, ICON_BATTERY_CHARGING_H, icon_battery_charging_data);
-}
 
 // ======== Usage Screen (480x320 landscape, side-by-side panels) ========
 
@@ -291,9 +281,6 @@ void ui_init(void) {
     // cleanly against whatever bg is behind it.
     init_icon_dsc_rgb565a8(&logo_dsc, LOGO_WIDTH, LOGO_HEIGHT, logo_data);
 
-    // Initialize battery icon descriptors
-    init_battery_icons();
-
     init_usage_screen(scr);
     splash_init(scr);
 
@@ -306,11 +293,6 @@ void ui_init(void) {
     logo_img = lv_image_create(scr);
     lv_image_set_src(logo_img, &logo_dsc);
     lv_obj_set_pos(logo_img, MARGIN, TITLE_Y - 10);
-
-    // Battery indicator on top of all containers (upper-right, inset)
-    battery_img = lv_image_create(scr);
-    lv_image_set_src(battery_img, &battery_dscs[0]);
-    lv_obj_set_pos(battery_img, SCR_W - 48 - MARGIN, TITLE_Y);
 }
 
 void ui_update(const UsageData* data) {
@@ -361,21 +343,11 @@ void ui_tick_anim(void) {
 }
 
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
-// Hide the battery indicator on the splash screen — the icon is visually
-// noisy over the pixel-art creature animations.
-static void apply_battery_visibility(void) {
-    if (!battery_img) return;
-    if (current_screen == SCREEN_SPLASH) lv_obj_add_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
-    else                                  lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
-}
 
-// LVGL handles click debouncing internally. Screen-level handler fires when
-// no child consumed the event (children only consume if they have their own
-// event callback, e.g. the Reset Bluetooth zone). On BT screen we skip the
-// splash toggle so only the reset zone is interactive there.
+// A tap anywhere toggles splash <-> usage (LVGL debounces internally).
 static void global_click_cb(lv_event_t* e) {
     (void)e;
-    ui_toggle_splash();   // tap anywhere toggles splash <-> usage
+    ui_toggle_splash();
 }
 
 void ui_show_screen(screen_t screen) {
@@ -396,7 +368,6 @@ void ui_show_screen(screen_t screen) {
 
     if (screen != SCREEN_SPLASH) prev_non_splash_screen = screen;
     current_screen = screen;
-    apply_battery_visibility();
 }
 
 void ui_toggle_splash(void) {
@@ -406,25 +377,6 @@ void ui_toggle_splash(void) {
 
 screen_t ui_get_current_screen(void) {
     return current_screen;
-}
-
-void ui_update_battery(int percent, bool charging) {
-    int idx;
-    if (charging) {
-        idx = 4;  // charging icon
-    } else if (percent < 0) {
-        idx = 0;  // no battery / unknown
-    } else if (percent <= 10) {
-        idx = 0;  // empty
-    } else if (percent <= 35) {
-        idx = 1;  // low
-    } else if (percent <= 75) {
-        idx = 2;  // medium
-    } else {
-        idx = 3;  // full
-    }
-    lv_image_set_src(battery_img, &battery_dscs[idx]);
-    apply_battery_visibility();
 }
 
 // ======== Event banner (Claude-session events) ========
