@@ -42,8 +42,8 @@ in real time with a coloured banner and a Warcraft-peasant voice line
 
 ## Quick start
 
-Full step-by-step (Windows/WSL2 `usbipd`, build, flash, daemon, hooks,
-troubleshooting, sound regeneration, history) is in **[`DOCUMENTATION.md`](DOCUMENTATION.md)**
+Full step-by-step (Windows/WSL2 `usbipd` + auto-attach, build, flash, daemon,
+hooks, troubleshooting, sound regeneration, history) is in **[`DOCUMENTATION.md`](DOCUMENTATION.md)**
 (also rendered as `DOCUMENTATION.html`).
 
 ```bash
@@ -51,7 +51,10 @@ troubleshooting, sound regeneration, history) is in **[`DOCUMENTATION.md`](DOCUM
 ./.piovenv/bin/pio run -d firmware
 ./.piovenv/bin/pio run -d firmware -t upload --upload-port /dev/ttyACM0
 
-# run the usage daemon (WSL2; device attached via usbipd)
+# run the usage daemon (WSL2; device attached via usbipd).
+# In practice this is wired as a systemd-user unit + a Windows
+# Scheduled Task -- see DOCUMENTATION.md sections 3.2 / 3.4 for
+# the hands-off (survives reboot/replug/reflash) setup.
 nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 >/tmp/claude-usage.log 2>&1 &
 ```
 
