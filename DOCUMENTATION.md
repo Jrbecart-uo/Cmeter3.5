@@ -109,29 +109,55 @@ input is the touchscreen (tap toggles the splash animation ↔ the dashboard).
 In a **Windows Administrator PowerShell**:
 
 ```powershell
-usbipd list                       # find the ESP32-S3 (VID 303a:1001), note BUSID
-usbipd bind   --busid <BUSID>     # one-time (persists)
-usbipd attach --wsl --busid <BUSID>   # re-run after every replug/reboot
+usbipd list                                   # find the ESP32-S3 (VID 303a:1001), note BUSID
+usbipd bind   --busid <BUSID>                 # one-time (persists)
+usbipd attach --wsl <Distro> --busid <BUSID>  # re-run after every replug/reboot
 ```
 
-Confirm in WSL2: `ls /dev/ttyACM0`.
+`<Distro>` is your WSL distribution (e.g. `Ubuntu-24.04`). Confirm in WSL2:
+`ls /dev/ttyACM0`.
 
 **Recommended — auto-attach (no more manual re-attach).** The ESP32-S3 USB-JTAG
 re-enumerates on every flash and every reboot, so the manual `attach` above is
-the #1 reason "the device stops updating". Run the bundled script **once** in an
-Administrator PowerShell (path is the WSL repo, e.g.
-`\\wsl$\Ubuntu\home\jbecart\tmp\Clawdmeter`):
+the #1 reason "the device stops updating". Copy the bundled script to a
+Windows-side path (the `\\wsl.localhost\...` UNC isn't visible to an elevated
+shell running as a different account) and run it **once** in an Administrator
+PowerShell:
 
-```powershell
-.\usbipd-autoattach.ps1                 # default device 303a:1001
-.\usbipd-autoattach.ps1 -HardwareId 303a:4001   # other board revision
-.\usbipd-autoattach.ps1 -Remove         # tear down
+```bash
+# In WSL: stage the script where Windows can read it.
+cp ./usbipd-autoattach.ps1 /mnt/c/Users/<you>/
 ```
 
-It binds the device (pinned by hardware-id, not busid) and registers a
-Scheduled Task that runs `usbipd attach --auto-attach` at logon. After this:
-replug → auto-reattaches; reboot → the task restarts the watcher. You never
-touch `usbipd attach` by hand again.
+```powershell
+# In Windows Admin PS:
+cd C:\Users\<you>
+powershell -ExecutionPolicy Bypass -File .\usbipd-autoattach.ps1 `
+    -RunAsUser "<domain-or-host>\<your-user>" `
+    -Distribution Ubuntu-24.04
+```
+
+- `-RunAsUser` is **required** on corporate / domain machines where UAC elevates
+  to a *different* account (e.g. `…\Administrator`). WSL2 distros are per-user,
+  so the Scheduled Task must run as the account that owns the distro, not the
+  admin account that registered it. On a personal machine where you're already
+  a local admin you can omit it.
+- `-Distribution` defaults to `Ubuntu-24.04`. Pass the name `wsl -l -q` shows.
+- `-HardwareId 303a:1001` is the default for the Cmeter3.5 board; override for
+  other board revisions.
+- `.\usbipd-autoattach.ps1 -Remove` tears the Scheduled Task down.
+
+What the script does, once:
+
+1. `usbipd bind --busid <id>` — persists the share for VID 303a:1001.
+2. Registers Scheduled Task `usbipd-esp32`, runs **at logon as `-RunAsUser`**,
+   action = a PowerShell loop that wakes WSL (`wsl -d <Distro> -- true`) and
+   then runs `usbipd attach --wsl <Distro> --hardware-id 303a:1001 --auto-attach`
+   (which itself blocks and re-attaches forever).
+
+After this: replug → auto-reattaches; reflash → same (USB-JTAG re-enumerates);
+reboot/logon → the task restarts the watcher. You never touch `usbipd attach`
+by hand again.
 
 ### 3.3 Build & flash the firmware
 
@@ -204,8 +230,8 @@ firing.
 ## 4. Daily use
 
 1. Device attach: nothing to do if you ran `usbipd-autoattach.ps1` (§3.2);
-   otherwise `usbipd attach --wsl --busid <BUSID>` in a Windows admin PS after
-   each reboot/replug.
+   otherwise `usbipd attach --wsl <Distro> --busid <BUSID>` in a Windows admin
+   PS after each reboot/replug.
 2. Daemon: nothing to do if you installed the systemd user service (§3.4) —
    it auto-starts at boot. Otherwise `nohup python3
    daemon/claude-usage-serial.py /dev/ttyACM0 >/tmp/claude-usage.log 2>&1 &`
@@ -236,7 +262,10 @@ Tap the screen to toggle the **splash creature** ↔ the **usage dashboard**.
 
 | Symptom | Cause / fix |
 |---|---|
-| No `/dev/ttyACM0` (usage stops updating) | usbipd detached (replug/reboot/flash re-enumerated the device). One-off fix: `usbipd attach --wsl --busid <BUSID>` (Windows admin PS). Permanent fix: run `usbipd-autoattach.ps1` once (§3.2). Then restart the daemon (next row). |
+| No `/dev/ttyACM0` (usage stops updating) | usbipd detached (replug/reboot/flash re-enumerated the device). One-off fix: `usbipd attach --wsl <Distro> --busid <BUSID>` (Windows admin PS). Permanent fix: run `usbipd-autoattach.ps1` once (§3.2). Then restart the daemon (next row). |
+| Auto-attach Scheduled Task is `Running` but `/dev/ttyACM0` never appears | Task is executing under the wrong user account (typical on AD/corp machines where UAC elevates to a different admin account). WSL2 distros are per-user, so the task can't reach yours. Re-run `usbipd-autoattach.ps1 -RunAsUser "<domain>\<your-user>"` (§3.2). Verify with `(Get-ScheduledTask usbipd-esp32).Principal.UserId` — must match the account that owns the WSL distro. |
+| `usbipd attach: Unrecognized command or argument 'Ubuntu-24.04'` | usbipd-win ≥ 5.x changed syntax: distro is now `--wsl <Name>`, not `--wsl --distribution <Name>`. The bundled script uses the new form; if you're invoking manually, drop `--distribution`. |
+| `wsl: There is no distribution with the supplied name` from an Admin PS | UAC put you in a different account than the one that installed WSL. Either run the script with `-RunAsUser` (above) or open the Admin PS as the same user (right-click PowerShell → Run as administrator; check with `whoami`). |
 | Dashboard stale / shows dashes (but event banners still work) | Usage daemon died — event banners are hook-driven and independent, so they keep working while polling is dead. `systemctl --user restart clawd-usage.service` (or check `/tmp/claude-usage.log`); ensure Claude Code is logged in for the token. |
 | No event banners/sounds | Hooks need a Claude Code **restart**. Check `/tmp/clawd-events.log`: `skip (no device)` = port detached; `sent` = delivered. |
 | Black screen | Wrong board profile. This is **ST7796 SPI** — confirm I²C 0x38 (FT6336), not 0x3B. The `screenshot` cmd dumps the framebuffer and will look fine even if the panel is dark — not a panel test. |

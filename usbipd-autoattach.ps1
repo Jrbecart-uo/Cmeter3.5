@@ -37,8 +37,14 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$HardwareId = "303a:1001",
-    [string]$TaskName   = "usbipd-esp32",
+    [string]$HardwareId   = "303a:1001",
+    [string]$TaskName     = "usbipd-esp32",
+    [string]$Distribution = "Ubuntu-24.04",
+    # User the task RUNS AS. WSL2 distros are per-user; if the admin shell
+    # runs as a different account than the one that owns the distro, the
+    # task must still execute under the distro-owner. Override on domain
+    # machines: -RunAsUser "domain\someoneelse".
+    [string]$RunAsUser    = "$env:USERDOMAIN\$env:USERNAME",
     [switch]$Remove
 )
 
@@ -79,22 +85,36 @@ $bus = (usbipd list |
 
 if ($bus) {
     Write-Host "Binding $HardwareId (busid $bus)..." -ForegroundColor Cyan
-    usbipd bind --busid $bus 2>$null
+    # usbipd writes info messages (e.g. "already shared") to stderr; with
+    # $ErrorActionPreference=Stop that would terminate the script, so isolate.
+    & { $ErrorActionPreference = 'Continue'; usbipd bind --busid $bus 2>&1 | Out-Null }
 } else {
-    Write-Host "Device $HardwareId not plugged in right now — binding skipped." -ForegroundColor Yellow
+    Write-Host "Device $HardwareId not plugged in right now -- binding skipped." -ForegroundColor Yellow
     Write-Host "Plug it in and re-run, or bind manually once it appears." -ForegroundColor Yellow
 }
 
 # 2. Scheduled Task: auto-attach watcher at logon, hidden, highest privileges.
-$arg = "attach --wsl --hardware-id $HardwareId --auto-attach"
-$action  = New-ScheduledTaskAction  -Execute "usbipd.exe" -Argument $arg
-$trigger = New-ScheduledTaskTrigger -AtLogOn
+# Wake WSL2 first ('usbipd attach --wsl' fails if no distro is running) and
+# loop the attach watcher so it survives WSL restarts. Use a PowerShell
+# wrapper (cmd.exe /c can't do labels/goto outside a .bat file).
+$psBody = @"
+while (`$true) {
+  & wsl.exe -d $Distribution -- true
+  & usbipd.exe attach --wsl $Distribution --hardware-id $HardwareId --auto-attach
+  Start-Sleep -Seconds 5
+}
+"@
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($psBody))
+$action  = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $RunAsUser
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -StartWhenAvailable `
     -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
 
+Write-Host "Task will run as: $RunAsUser" -ForegroundColor Cyan
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-    -Settings $settings -RunLevel Highest -Force | Out-Null
+    -Settings $settings -User $RunAsUser -RunLevel Highest -Force | Out-Null
 
 Write-Host "`nRegistered Scheduled Task '$TaskName'." -ForegroundColor Green
 Write-Host "Starting it now so you don't have to log out..." -ForegroundColor Cyan

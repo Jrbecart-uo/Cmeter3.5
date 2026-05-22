@@ -202,11 +202,21 @@ I²C scan shows 0x38 and <em>no</em> 0x3B, you have this board.</p>
 </ul>
 <h3 id="32-attach-the-device-to-wsl2">3.2 Attach the device to WSL2</h3>
 <p>In a <strong>Windows Administrator PowerShell</strong>:</p>
-<pre><code class="language-powershell">usbipd list                       # find the ESP32-S3 (VID 303a:1001), note BUSID
-usbipd bind   --busid &lt;BUSID&gt;     # one-time (persists)
-usbipd attach --wsl --busid &lt;BUSID&gt;   # re-run after every replug/reboot
+<pre><code class="language-powershell">usbipd list                                   # find the ESP32-S3 (VID 303a:1001), note BUSID
+usbipd bind   --busid &lt;BUSID&gt;                 # one-time (persists)
+usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;  # re-run after every replug/reboot
 </code></pre>
-<p>Confirm in WSL2: <code>ls /dev/ttyACM0</code>.</p>
+<p><code>&lt;Distro&gt;</code> is your WSL distribution name (e.g. <code>Ubuntu-24.04</code>).
+Confirm in WSL2: <code>ls /dev/ttyACM0</code>.</p>
+<p><strong>Recommended — auto-attach.</strong> Stage <code>usbipd-autoattach.ps1</code> to a Windows path
+and run it once from an Admin PowerShell with <code>-RunAsUser</code> set to the account
+that owns your WSL distro (required on AD/corp machines where UAC elevates to a
+different user):</p>
+<pre><code class="language-powershell">cd C:\Users\&lt;you&gt;
+powershell -ExecutionPolicy Bypass -File .\usbipd-autoattach.ps1 `
+    -RunAsUser "&lt;domain&gt;\&lt;your-user&gt;" `
+    -Distribution Ubuntu-24.04
+</code></pre>
 <h3 id="33-build-flash-the-firmware">3.3 Build &amp; flash the firmware</h3>
 <pre><code class="language-bash">./.piovenv/bin/pio run -d firmware
 ./.piovenv/bin/pio run -d firmware -t upload --upload-port /dev/ttyACM0
@@ -265,7 +275,7 @@ firing.</p>
 <hr />
 <h2 id="4-daily-use">4. Daily use</h2>
 <ol>
-<li>(After reboot/replug) <code>usbipd attach --wsl --busid &lt;BUSID&gt;</code> in Windows admin PS.</li>
+<li>Nothing if you ran <code>usbipd-autoattach.ps1</code> (§3.2); otherwise (after reboot/replug) <code>usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;</code> in Windows admin PS.</li>
 <li><code>nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 &gt;/tmp/claude-usage.log 2&gt;&amp;1 &amp;</code></li>
 <li>Use Claude Code normally — the dashboard tracks usage; banners + voices fire
    on session events.</li>
@@ -298,7 +308,7 @@ firing.</p>
 <tbody>
 <tr>
 <td>No <code>/dev/ttyACM0</code></td>
-<td>usbipd detached — re-run <code>usbipd attach --wsl --busid &lt;BUSID&gt;</code> (Windows admin PS). Survives replug only after <code>bind</code>.</td>
+<td>usbipd detached. One-off: <code>usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;</code> (Windows admin PS). Permanent: run <code>usbipd-autoattach.ps1 -RunAsUser "&lt;domain&gt;\&lt;you&gt;"</code> once (§3.2).</td>
 </tr>
 <tr>
 <td>Dashboard shows dashes</td>

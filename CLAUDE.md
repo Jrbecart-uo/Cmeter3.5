@@ -61,10 +61,18 @@ No BLE, no `ble.*`. Transport is USB serial only. Touch handled in `ui.cpp` via 
 PlatformIO is not system-wide for this user — use `./.piovenv/bin/pio` (venv at repo root,
 git-ignored). Env: `waveshare_touch_lcd_35`. Device = `/dev/ttyACM0` (USB-JTAG).
 
-**WSL2:** `/dev/ttyACM0` only exists after, in a Windows **Admin** PowerShell:
-`usbipd attach --wsl --busid 1-1` (re-run after every replug/reboot; `bind` persists once).
+**WSL2:** `/dev/ttyACM0` only exists once usbipd has attached the device. Auto-attach is
+wired in this repo — `usbipd-autoattach.ps1` registers a Windows Scheduled Task `usbipd-esp32`
+that, at every logon, wakes WSL and runs `usbipd attach --wsl Ubuntu-24.04 --hardware-id
+303a:1001 --auto-attach`. The task must RUN AS the user that owns the WSL distro
+(`-RunAsUser "uottawa\jbecart"` on this corp/AD machine, since UAC elevates to a different
+admin account). One-off manual attach if needed: `usbipd attach --wsl Ubuntu-24.04 --busid <id>`
+in a non-elevated `uottawa\jbecart` PowerShell.
 
 ## Run (host daemon + hooks)
+
+On this machine the daemon runs as a systemd-user unit (`daemon/clawd-usage.service`,
+`Restart=always`, lingering enabled) — `systemctl --user status clawd-usage.service`. Manual:
 
 ```bash
 nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 >/tmp/claude-usage.log 2>&1 &
@@ -94,8 +102,15 @@ not proof the physical panel is lit (that lesson cost hours — see history). Bo
    `.sh` LF; `screenshot.sh` ffmpeg size is dynamic from the device header.
 6. **Repo hygiene.** `device/` (399MB, >100MB zip) is git-ignored — never commit it.
    `firmware/lib/` IS committed (required vendored deps). `.piovenv/` ignored.
+7. **usbipd-win 5.x syntax.** Distro goes as the *value* of `--wsl`, NOT under `--distribution`
+   (that flag was removed). Use `usbipd attach --wsl Ubuntu-24.04 --hardware-id 303a:1001
+   --auto-attach`. The script in-tree uses the correct form.
+8. **Corp/AD elevation gotcha.** On this machine `uottawa\jbecart` isn't a local admin; UAC
+   gives an Admin PS as a *different* account that has no WSL distro of its own. The
+   Scheduled Task must therefore be registered with `-RunAsUser "uottawa\jbecart"` — see
+   memory `usbipd-autoattach`.
 
-## State (2026-05-19) — shipped
+## State (2026-05-22) — auto-attach wired
 
 Project renamed **Cmeter3.5**; pushed to **github.com/Jrbecart-uo/Cmeter3.5** (SSH deploy
 key pinned via repo `core.sshCommand`, so `git push` from this repo just works). Docs:
@@ -106,6 +121,10 @@ Fully working: ST7796 display, FT6336 touch, USB-serial live usage (reset times 
 per-event colored banners + real game-sounds **warcraft** voice clips (one iconic clip/event,
 embedded PCM), boot self-test beep. BLE + buttons removed. Battery indicator removed
 (USB-only). `power.cpp` = rails-only. Usage polls silent (sound = events + boot only).
+
+Hands-off recovery (2026-05-22): Windows Scheduled Task `usbipd-esp32` (runs as
+`uottawa\jbecart`) + WSL `clawd-usage.service` (linger'd systemd-user unit) → replug,
+reflash, reboot, and re-logon all heal the dashboard with no human in the loop.
 
 Open / notes: AXP2101 init intermittently fails on some boots (black screen that boot;
 power-cycle fixes — flaky shared I2C, no clean fix found). The "@hermannbjorgvin / Clawd
