@@ -107,9 +107,20 @@ while (`$true) {
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($psBody))
 $action  = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $RunAsUser
+
+# No -User filter on the trigger: on AD machines the logon-event principal
+# can be reported as SID / UPN / DOMAIN\user variants and the string match
+# silently fails. Fire on any logon and let -User on Register-ScheduledTask
+# (interactive logon type) restrict who actually runs. 30s delay gives
+# wsl.exe time to come up before the first attach.
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+$trigger.Delay = "PT30S"
+
+# Internal while($true) loop in the action retries every 5s, so a single
+# trigger is enough; -MultipleInstances IgnoreNew keeps double-fires safe.
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -StartWhenAvailable `
+    -MultipleInstances IgnoreNew `
     -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
 
 Write-Host "Task will run as: $RunAsUser" -ForegroundColor Cyan
