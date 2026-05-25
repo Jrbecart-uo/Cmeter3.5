@@ -65,13 +65,13 @@ git-ignored). Env: `waveshare_touch_lcd_35`. Device = `/dev/ttyACM0` (USB-JTAG).
 wired in this repo — `usbipd-autoattach.ps1` registers a Windows Scheduled Task `usbipd-esp32`
 that, at every logon, wakes WSL and runs `usbipd attach --wsl Ubuntu-24.04 --hardware-id
 303a:1001 --auto-attach`. The task must RUN AS the user that owns the WSL distro
-(`-RunAsUser "uottawa\jbecart"` on this corp/AD machine, since UAC elevates to a different
-admin account). One-off manual attach if needed: `usbipd attach --wsl Ubuntu-24.04 --busid <id>`
-in a non-elevated `uottawa\jbecart` PowerShell.
+(`-RunAsUser "<your-domain>\<your-user>"` on a corp/AD machine, since UAC elevates to a
+different admin account). One-off manual attach if needed: `usbipd attach --wsl Ubuntu-24.04
+--busid <id>` in a non-elevated user PowerShell.
 
 ## Run (host daemon + hooks)
 
-On this machine the daemon runs as a systemd-user unit (`daemon/clawd-usage.service`,
+The daemon is wired as a systemd-user unit (`daemon/clawd-usage.service`,
 `Restart=always`, lingering enabled) — `systemctl --user status clawd-usage.service`. Manual:
 
 ```bash
@@ -105,14 +105,14 @@ not proof the physical panel is lit (that lesson cost hours — see history). Bo
 7. **usbipd-win 5.x syntax.** Distro goes as the *value* of `--wsl`, NOT under `--distribution`
    (that flag was removed). Use `usbipd attach --wsl Ubuntu-24.04 --hardware-id 303a:1001
    --auto-attach`. The script in-tree uses the correct form.
-8. **Corp/AD elevation gotcha.** On this machine `uottawa\jbecart` isn't a local admin; UAC
-   gives an Admin PS as a *different* account that has no WSL distro of its own. The
-   Scheduled Task must therefore be registered with `-RunAsUser "uottawa\jbecart"` — see
-   memory `usbipd-autoattach`.
+8. **Corp/AD elevation gotcha.** If the user that owns the WSL distro isn't a local admin,
+   UAC gives an Admin PS as a *different* account that has no WSL distro of its own. The
+   Scheduled Task must therefore be registered with `-RunAsUser "<your-domain>\<your-user>"`
+   — see memory `usbipd-autoattach`.
 
 ## State (2026-05-22) — auto-attach wired
 
-Project renamed **Cmeter3.5**; pushed to **github.com/Jrbecart-uo/Cmeter3.5** (SSH deploy
+Project name **Cmeter3.5**; pushed to a personal GitHub fork (see `git remote -v`; SSH deploy
 key pinned via repo `core.sshCommand`, so `git push` from this repo just works). Docs:
 `README.md` (fork-of-Clawdmeter credit + Waveshare links + screenshot), `DOCUMENTATION.md`
 + `.html`, this file.
@@ -122,13 +122,12 @@ per-event colored banners + real game-sounds **warcraft** voice clips (one iconi
 embedded PCM), boot self-test beep. BLE + buttons removed. Battery indicator removed
 (USB-only). `power.cpp` = rails-only. Usage polls silent (sound = events + boot only).
 
-Hands-off recovery (2026-05-22): Windows Scheduled Task `usbipd-esp32` (runs as
-`uottawa\jbecart`) + WSL `clawd-usage.service` (linger'd systemd-user unit) → replug,
-reflash, reboot, and re-logon all heal the dashboard with no human in the loop.
+Hands-off recovery: Windows Scheduled Task `usbipd-esp32` (runs as the WSL-owning user) +
+WSL `clawd-usage.service` (linger'd systemd-user unit) → replug, reflash, reboot, and
+re-logon all heal the dashboard with no human in the loop.
 
 Open / notes: AXP2101 init intermittently fails on some boots (black screen that boot;
 power-cycle fixes — flaky shared I2C, no clean fix found). The "@hermannbjorgvin / Clawd
 by @amaanbuilds" attribution line was on the deleted Bluetooth screen — currently not shown
 on-device anywhere (relocate to splash/footer if wanted; credit IS in README/DOCUMENTATION).
-Commit author email is `jbecart@uottawa.ca` (public in history) — user offered a noreply
-rewrite, deferred. `device/` (399MB Waveshare demo) git-ignored.
+`device/` (399MB Waveshare demo) git-ignored.
