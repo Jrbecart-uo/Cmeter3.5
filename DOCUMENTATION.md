@@ -305,4 +305,4 @@ pitch-shifted.
 - Upstream Clawdmeter concept & firmware: **@hermannbjorgvin**.
 - Clawd pixel-art animation: **@amaanbuilds**.
 - Event sound effects: the **game-sounds** Claude Code plugin (citedy) — warcraft pack.
-- This ESP32-S3-Touch-LCD-3.5 port + USB-serial/sound/event work: this fork's author (see `git log`).
+- This ESP32-S3-Touch-LCD-3.5 port + USB-serial/sound/event work: Jean-Roch Bécart.

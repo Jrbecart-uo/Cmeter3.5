@@ -69,4 +69,4 @@ Claude-event hooks are configured in `~/.claude/settings.json`
 - **Clawd pixel-art animation:** [@amaanbuilds](https://claudepix.vercel.app).
 - **Event sound effects:** the **game-sounds** Claude Code plugin (citedy) — warcraft pack.
 - **ESP32-S3-Touch-LCD-3.5 port** (ST7796/FT6336, USB-serial, audio + event
-  notifications): this fork's author (see `git log`).
+  notifications): Jean-Roch Bécart.
