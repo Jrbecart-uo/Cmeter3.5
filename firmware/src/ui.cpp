@@ -13,6 +13,7 @@ LV_FONT_DECLARE(font_styrene_24);
 LV_FONT_DECLARE(font_styrene_20);
 LV_FONT_DECLARE(font_mono_32);
 LV_FONT_DECLARE(font_mono_18);
+LV_FONT_DECLARE(font_styrene_16);
 
 // Anthropic brand palette — design tokens live in theme.h
 #include "theme.h"
@@ -301,7 +302,7 @@ static void init_status_screen(lv_obj_t* scr) {
     lv_obj_add_event_cb(status_container, global_click_cb, LV_EVENT_CLICKED, NULL);
 
     lbl_status_title = lv_label_create(status_container);
-    lv_label_set_text(lbl_status_title, "FAM Status");
+    lv_label_set_text(lbl_status_title, "Web Status");
     lv_obj_set_style_text_font(lbl_status_title, &font_styrene_28, 0);
     lv_obj_set_style_text_color(lbl_status_title, COL_TEXT, 0);
     lv_obj_align(lbl_status_title, LV_ALIGN_TOP_MID, 0, 8);
@@ -321,8 +322,8 @@ static void init_status_screen(lv_obj_t* scr) {
         lv_obj_add_flag(sb_dot[i], LV_OBJ_FLAG_HIDDEN);
 
         sb_cell_lbl[i] = lv_label_create(status_container);
-        lv_obj_set_pos(sb_cell_lbl[i], x + 22, y);
-        lv_obj_set_style_text_font(sb_cell_lbl[i], &font_mono_18, 0);
+        lv_obj_set_pos(sb_cell_lbl[i], x + 22, y + 1);
+        lv_obj_set_style_text_font(sb_cell_lbl[i], &font_styrene_16, 0);
         lv_obj_set_style_text_color(sb_cell_lbl[i], COL_DIM, 0);
         lv_label_set_text(sb_cell_lbl[i], "");
         lv_obj_add_flag(sb_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
