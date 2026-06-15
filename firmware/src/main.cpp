@@ -116,17 +116,32 @@ static bool apply_usage_json(const char* json) {
     return true;
 }
 
-// Apply a FLAT status-board payload — same scalar style as the usage payload
-// (no array/loop, which is what hung the status path):
-//   {"sb":1,"sum":"16 / 18 up","dn":"Down: DB-prod DB-pp","red":1}
+// Apply a FLAT status-board payload. The item list comes as a delimited string
+// ("name=state;name=state;...") split with strtok — plain C, NOT a JSON array
+// (a JSON array on-device hung the parse).
+//   {"sb":1,"g":"fam=1;DB-prod=0;...","lf":"! last fail: ln2  2026-06-15 09:42"}
 static bool apply_status_json(const char* json) {
     JsonDocument doc;
     if (deserializeJson(doc, json)) return false;
     if (!doc["sb"].is<int>()) return false;   // marker; absent on usage lines
 
-    strlcpy(statusData.sum, doc["sum"] | "", sizeof(statusData.sum));
-    strlcpy(statusData.down, doc["dn"] | "", sizeof(statusData.down));
-    statusData.red = doc["red"].as<bool>();   // as<bool>() coerces 1/0 (| is strict)
+    strlcpy(statusData.lastfail, doc["lf"] | "", sizeof(statusData.lastfail));
+
+    static char gbuf[640];
+    strlcpy(gbuf, doc["g"] | "", sizeof(gbuf));
+    statusData.count = 0;
+    char* save = nullptr;
+    for (char* tok = strtok_r(gbuf, ";", &save);
+         tok && statusData.count < SB_MAX;
+         tok = strtok_r(nullptr, ";", &save)) {
+        char* eq = strchr(tok, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        strlcpy(statusData.items[statusData.count].name, tok,
+                sizeof(statusData.items[0].name));
+        statusData.items[statusData.count].state = (uint8_t) atoi(eq + 1);
+        statusData.count++;
+    }
     statusData.valid = true;
 
     ui_update_status(&statusData);

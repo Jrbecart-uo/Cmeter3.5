@@ -11,13 +11,20 @@ struct UsageData {
     bool valid;              // false until first successful parse
 };
 
-// Status-board payload. The daemon does ALL the formatting and sends FLAT
-// scalars (exactly like the usage payload), so the firmware only extracts
-// strings — no array/loop, which is what hung the render:
-//   {"sb":1,"sum":"16 / 18 up","dn":"Down: DB-prod DB-pp","red":1}
+// Status-board payload. The daemon sends a FLAT object whose "g" field is a
+// delimited string (NOT a JSON array — a JSON array on-device hung the parse):
+//   {"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;...","lf":"! last fail: ln2  2026-06-15 09:42"}
+//   state: 1=ok 0=down 2=unknown.  The firmware splits "g" with strtok (plain C).
+#define SB_MAX 24
+
+struct StatusItem {
+    char name[16];
+    uint8_t state;           // 1=ok, 0=down, 2=unknown
+};
+
 struct StatusData {
-    char sum[48];    // headline, e.g. "16 / 18 up"
-    char down[256];  // "Down: ..." or "all systems OK"
-    bool red;        // true if anything is down (color the headline red)
+    StatusItem items[SB_MAX];
+    int count;
+    char lastfail[56];       // pre-formatted bottom line
     bool valid;
 };

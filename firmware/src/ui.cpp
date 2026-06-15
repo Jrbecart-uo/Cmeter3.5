@@ -53,12 +53,16 @@ static lv_obj_t* lbl_weekly_label;
 static lv_obj_t* lbl_weekly_reset;
 static lv_obj_t* lbl_anim;
 
-// ---- Status-board screen widgets (all single-line: no LONG_WRAP, which hangs
-// the render once populated; the "waiting..." label proved single-line works) ----
+// ---- Status-board screen widgets ----
+// A fixed grid of pre-created dot+label cells (like the usage screen pre-creates
+// its widgets); update only sets color/text/visibility — never creates objects
+// or parses arrays at runtime.
+#define SB_CELLS 24
 static lv_obj_t* status_container;
 static lv_obj_t* lbl_status_title;
-static lv_obj_t* lbl_status_sum;    // big: "16 / 18 up"
-static lv_obj_t* lbl_status_down;   // red: "Down: DB-prod DB-pp" (single line)
+static lv_obj_t* sb_dot[SB_CELLS];
+static lv_obj_t* sb_cell_lbl[SB_CELLS];
+static lv_obj_t* lbl_status_lf;     // bottom "last fail" line
 
 // ---- Logo (shared, on top) ----
 static lv_obj_t* logo_img;
@@ -283,7 +287,9 @@ static void init_usage_screen(lv_obj_t* scr) {
 // ======== Status-board Screen (480x320 landscape) ========
 // Four plain static labels (no recolor, no per-item object churn -> crash-safe):
 // a title, a summary line, a RED label listing whatever needs attention, and a
-// GREEN label listing the healthy targets. Updated via lv_label_set_text.
+// Grid of dot+label cells (4 columns), pre-created here and only updated
+// (color/text/visibility) at runtime — no object creation or array parsing
+// in the hot path. Plus a bottom "last fail" line.
 static void init_status_screen(lv_obj_t* scr) {
     status_container = lv_obj_create(scr);
     lv_obj_set_size(status_container, SCR_W, SCR_H);
@@ -295,25 +301,38 @@ static void init_status_screen(lv_obj_t* scr) {
     lv_obj_add_event_cb(status_container, global_click_cb, LV_EVENT_CLICKED, NULL);
 
     lbl_status_title = lv_label_create(status_container);
-    lv_label_set_text(lbl_status_title, "Status");
-    lv_obj_set_style_text_font(lbl_status_title, &font_tiempos_56, 0);
+    lv_label_set_text(lbl_status_title, "FAM Status");
+    lv_obj_set_style_text_font(lbl_status_title, &font_styrene_28, 0);
     lv_obj_set_style_text_color(lbl_status_title, COL_TEXT, 0);
-    lv_obj_align(lbl_status_title, LV_ALIGN_TOP_MID, 0, TITLE_Y);
+    lv_obj_align(lbl_status_title, LV_ALIGN_TOP_MID, 0, 8);
 
-    // Big summary line. Single line, no width/wrap (same recipe as the
-    // working usage labels) so the render never enters the wrap path.
-    lbl_status_sum = lv_label_create(status_container);
-    lv_label_set_text(lbl_status_sum, "waiting for status...");
-    lv_obj_set_style_text_font(lbl_status_sum, &font_styrene_48, 0);
-    lv_obj_set_style_text_color(lbl_status_sum, COL_DIM, 0);
-    lv_obj_align(lbl_status_sum, LV_ALIGN_TOP_LEFT, MARGIN, CONTENT_Y + 10);
+    const int COLS = 4, CW = 116, X0 = MARGIN, Y0 = 52, RH = 40;
+    for (int i = 0; i < SB_CELLS; i++) {
+        int x = X0 + (i % COLS) * CW;
+        int y = Y0 + (i / COLS) * RH;
 
-    // Red "Down: ..." line. Single line (clipped if very long).
-    lbl_status_down = lv_label_create(status_container);
-    lv_label_set_text(lbl_status_down, "");
-    lv_obj_set_style_text_font(lbl_status_down, &font_mono_18, 0);
-    lv_obj_set_style_text_color(lbl_status_down, COL_RED, 0);
-    lv_obj_align(lbl_status_down, LV_ALIGN_TOP_LEFT, MARGIN, CONTENT_Y + 110);
+        sb_dot[i] = lv_obj_create(status_container);
+        lv_obj_set_size(sb_dot[i], 16, 16);
+        lv_obj_set_pos(sb_dot[i], x, y + 3);
+        lv_obj_set_style_radius(sb_dot[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(sb_dot[i], 0, 0);
+        lv_obj_set_style_bg_color(sb_dot[i], COL_GREEN, 0);
+        lv_obj_clear_flag(sb_dot[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(sb_dot[i], LV_OBJ_FLAG_HIDDEN);
+
+        sb_cell_lbl[i] = lv_label_create(status_container);
+        lv_obj_set_pos(sb_cell_lbl[i], x + 22, y);
+        lv_obj_set_style_text_font(sb_cell_lbl[i], &font_mono_18, 0);
+        lv_obj_set_style_text_color(sb_cell_lbl[i], COL_DIM, 0);
+        lv_label_set_text(sb_cell_lbl[i], "");
+        lv_obj_add_flag(sb_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lbl_status_lf = lv_label_create(status_container);
+    lv_obj_set_pos(lbl_status_lf, X0, 292);
+    lv_obj_set_style_text_font(lbl_status_lf, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_status_lf, COL_AMBER, 0);
+    lv_label_set_text(lbl_status_lf, "waiting for status...");
 }
 
 // ======== Bluetooth Screen (480x320 landscape) ========
@@ -369,15 +388,25 @@ void ui_update(const UsageData* data) {
     lv_label_set_text(lbl_weekly_reset, buf);
 }
 
-// DEBUG: show a checkpoint string on the status screen and force a synchronous
-// Mirror of ui_update(): drop pre-formatted scalars straight into existing
-// labels. The daemon already built the strings, so there's no array/loop here.
+// Update the dot grid: set each cell's color (green/red/grey) + name + show it;
+// hide unused cells. Only touches pre-created widgets — no allocation here.
 void ui_update_status(const StatusData* data) {
     if (!data->valid) return;
     have_status = true;
-    lv_label_set_text(lbl_status_sum, data->sum);
-    lv_obj_set_style_text_color(lbl_status_sum, data->red ? COL_RED : COL_GREEN, 0);
-    lv_label_set_text(lbl_status_down, data->down);
+    for (int i = 0; i < SB_CELLS; i++) {
+        if (i < data->count) {
+            lv_color_t c = data->items[i].state == 1 ? COL_GREEN
+                         : data->items[i].state == 0 ? COL_RED : COL_DIM;
+            lv_obj_set_style_bg_color(sb_dot[i], c, 0);
+            lv_obj_clear_flag(sb_dot[i], LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(sb_cell_lbl[i], data->items[i].name);
+            lv_obj_clear_flag(sb_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(sb_dot[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(sb_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    lv_label_set_text(lbl_status_lf, data->lastfail[0] ? data->lastfail : "all systems OK");
 }
 
 void ui_tick_anim(void) {
@@ -424,10 +453,13 @@ void ui_show_screen(screen_t screen) {
     default: break;
     }
 
-    // Hide the logo overlay on the splash screen so the animation has a clean canvas
+    // Hide the logo overlay on the splash + status screens (splash needs a clean
+    // canvas; the status grid has its own title and the logo overlaps cell 1).
     if (logo_img) {
-        if (screen == SCREEN_SPLASH) lv_obj_add_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
-        else                          lv_obj_clear_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
+        if (screen == SCREEN_SPLASH || screen == SCREEN_STATUS)
+            lv_obj_add_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_clear_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
     }
 
     if (screen != SCREEN_SPLASH) prev_non_splash_screen = screen;

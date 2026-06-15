@@ -81,14 +81,22 @@ def status_payload():
     req = urllib.request.Request(STATUS_URL, headers={"User-Agent": "clawd-combined/1"})
     with urllib.request.urlopen(req, timeout=15) as r:
         st = json.loads(r.read().decode("utf-8", "replace"))
+    return build_status_line(st)
+
+
+def build_status_line(st):
+    # Flat "name=state;..." grid string (no JSON array on-device) + a
+    # pre-formatted "last fail" line built from the most recent failure.
     items = st.get("items", [])
-    total = len(items)
-    ok = sum(1 for i in items if i.get("state") == "ok")
-    down_names = [i.get("short", "?") for i in items if i.get("state") != "ok"]
-    sum_s = f"{ok} / {total} up"
-    down_s = ("Down: " + " ".join(down_names)) if down_names else "all systems OK"
-    return json.dumps({"sb": 1, "sum": sum_s, "dn": down_s[:160],
-                       "red": 1 if down_names else 0}, separators=(",", ":"))
+    g = ";".join(f"{i.get('short', '?')}={STATE_NUM.get(i.get('state'), 2)}" for i in items)
+    fails = [(i.get("short", "?"), i.get("last_failure")) for i in items
+             if i.get("state") != "ok" and i.get("last_failure")]
+    if fails:
+        fails.sort(key=lambda x: x[1], reverse=True)
+        lf = f"! last fail: {fails[0][0]}  {fails[0][1]}"
+    else:
+        lf = "all systems OK"
+    return json.dumps({"sb": 1, "g": g, "lf": lf[:54]}, separators=(",", ":"))
 
 
 def configure_port(path):
