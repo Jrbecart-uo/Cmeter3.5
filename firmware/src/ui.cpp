@@ -53,10 +53,12 @@ static lv_obj_t* lbl_weekly_label;
 static lv_obj_t* lbl_weekly_reset;
 static lv_obj_t* lbl_anim;
 
-// ---- Status-board screen widgets ----
+// ---- Status-board screen widgets (all single-line: no LONG_WRAP, which hangs
+// the render once populated; the "waiting..." label proved single-line works) ----
 static lv_obj_t* status_container;
 static lv_obj_t* lbl_status_title;
-static lv_obj_t* lbl_status;   // one recolor-enabled, wrapped label = the dot grid
+static lv_obj_t* lbl_status_sum;    // big: "16 / 18 up"
+static lv_obj_t* lbl_status_down;   // red: "Down: DB-prod DB-pp" (single line)
 
 // ---- Logo (shared, on top) ----
 static lv_obj_t* logo_img;
@@ -64,6 +66,12 @@ static lv_obj_t* logo_img;
 // ---- Shared ----
 static lv_image_dsc_t logo_dsc;
 static screen_t current_screen = SCREEN_USAGE;
+
+// ---- Screen rotation (Usage <-> Status) ----
+#define ROTATE_MS 30000
+static bool have_usage = false;
+static bool have_status = false;
+static uint32_t last_rotate_ms = 0;
 
 // Animation state
 static uint32_t anim_last_ms = 0;
@@ -273,9 +281,9 @@ static void init_usage_screen(lv_obj_t* scr) {
 }
 
 // ======== Status-board Screen (480x320 landscape) ========
-// One recolor-enabled wrapped label renders the whole dot grid: each target's
-// short name is colored green (ok) / red (down) / grey (unknown). Low LVGL
-// surface area = far less to get wrong than N per-tile widgets.
+// Four plain static labels (no recolor, no per-item object churn -> crash-safe):
+// a title, a summary line, a RED label listing whatever needs attention, and a
+// GREEN label listing the healthy targets. Updated via lv_label_set_text.
 static void init_status_screen(lv_obj_t* scr) {
     status_container = lv_obj_create(scr);
     lv_obj_set_size(status_container, SCR_W, SCR_H);
@@ -288,18 +296,24 @@ static void init_status_screen(lv_obj_t* scr) {
 
     lbl_status_title = lv_label_create(status_container);
     lv_label_set_text(lbl_status_title, "Status");
-    lv_obj_set_style_text_font(lbl_status_title, &font_styrene_28, 0);
+    lv_obj_set_style_text_font(lbl_status_title, &font_tiempos_56, 0);
     lv_obj_set_style_text_color(lbl_status_title, COL_TEXT, 0);
     lv_obj_align(lbl_status_title, LV_ALIGN_TOP_MID, 0, TITLE_Y);
 
-    lbl_status = lv_label_create(status_container);
-    lv_label_set_recolor(lbl_status, true);
-    lv_label_set_long_mode(lbl_status, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(lbl_status, CONTENT_W);
-    lv_obj_set_style_text_font(lbl_status, &font_mono_18, 0);
-    lv_obj_set_style_text_color(lbl_status, COL_DIM, 0);
-    lv_label_set_text(lbl_status, "waiting for status...");
-    lv_obj_align(lbl_status, LV_ALIGN_TOP_LEFT, MARGIN, CONTENT_Y);
+    // Big summary line. Single line, no width/wrap (same recipe as the
+    // working usage labels) so the render never enters the wrap path.
+    lbl_status_sum = lv_label_create(status_container);
+    lv_label_set_text(lbl_status_sum, "waiting for status...");
+    lv_obj_set_style_text_font(lbl_status_sum, &font_styrene_48, 0);
+    lv_obj_set_style_text_color(lbl_status_sum, COL_DIM, 0);
+    lv_obj_align(lbl_status_sum, LV_ALIGN_TOP_LEFT, MARGIN, CONTENT_Y + 10);
+
+    // Red "Down: ..." line. Single line (clipped if very long).
+    lbl_status_down = lv_label_create(status_container);
+    lv_label_set_text(lbl_status_down, "");
+    lv_obj_set_style_text_font(lbl_status_down, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_status_down, COL_RED, 0);
+    lv_obj_align(lbl_status_down, LV_ALIGN_TOP_LEFT, MARGIN, CONTENT_Y + 110);
 }
 
 // ======== Bluetooth Screen (480x320 landscape) ========
@@ -333,6 +347,7 @@ void ui_init(void) {
 
 void ui_update(const UsageData* data) {
     if (!data->valid) return;
+    have_usage = true;
 
     int s_pct = (int)(data->session_pct + 0.5f);
 
@@ -354,20 +369,28 @@ void ui_update(const UsageData* data) {
     lv_label_set_text(lbl_weekly_reset, buf);
 }
 
+// DEBUG: show a checkpoint string on the status screen and force a synchronous
 void ui_update_status(const StatusData* data) {
     if (!data->valid) return;
+    have_status = true;
 
-    static char buf[SB_MAX * 28 + 96];
-    int n = 0;
-    n += snprintf(buf + n, sizeof(buf) - n,
-                  "#788c5d %d ok#   #c0392b %d down#   #b0aea5 %d unk#\n\n",
-                  data->ok, data->down, data->unk);
-    for (int i = 0; i < data->count && n < (int)sizeof(buf) - 40; i++) {
-        const char* col = data->items[i].state == 1 ? "788c5d"
-                        : data->items[i].state == 0 ? "c0392b" : "b0aea5";
-        n += snprintf(buf + n, sizeof(buf) - n, "#%s %s#   ", col, data->items[i].name);
+    char sum[48];
+    snprintf(sum, sizeof(sum), "%d / %d up", data->ok, data->count);
+    lv_label_set_text(lbl_status_sum, sum);
+    lv_obj_set_style_text_color(lbl_status_sum, data->down ? COL_RED : COL_GREEN, 0);
+
+    char down[256] = "Down: ";
+    size_t dn = strlen(down);
+    bool any = false;
+    for (int i = 0; i < data->count; i++) {
+        if (data->items[i].state != 1) {
+            dn += snprintf(down + dn, sizeof(down) - dn, "%s ", data->items[i].name);
+            any = true;
+            if (dn > sizeof(down) - 20) break;
+        }
     }
-    lv_label_set_text(lbl_status, buf);
+    if (!any) strcpy(down, "all systems OK");
+    lv_label_set_text(lbl_status_down, down);
 }
 
 void ui_tick_anim(void) {
@@ -396,10 +419,10 @@ void ui_tick_anim(void) {
 
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
 
-// A tap anywhere toggles splash <-> usage (LVGL debounces internally).
+// A tap anywhere advances to the next info screen (Usage <-> Status).
 static void global_click_cb(lv_event_t* e) {
     (void)e;
-    ui_toggle_splash();
+    ui_rotate_next();
 }
 
 void ui_show_screen(screen_t screen) {
@@ -427,6 +450,20 @@ void ui_show_screen(screen_t screen) {
 void ui_toggle_splash(void) {
     if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
     else                                  ui_show_screen(SCREEN_SPLASH);
+}
+
+// Advance to the next info screen (Usage <-> Status) and reset the timer so a
+// manual tap gives you a full interval before auto-rotation moves on.
+void ui_rotate_next(void) {
+    ui_show_screen(current_screen == SCREEN_STATUS ? SCREEN_USAGE : SCREEN_STATUS);
+    last_rotate_ms = lv_tick_get();
+}
+
+// Called every loop; auto-rotates once BOTH datasets have arrived.
+void ui_tick_rotate(void) {
+    if (!have_usage || !have_status) return;
+    if (current_screen == SCREEN_SPLASH) return;
+    if (lv_tick_get() - last_rotate_ms >= ROTATE_MS) ui_rotate_next();
 }
 
 screen_t ui_get_current_screen(void) {

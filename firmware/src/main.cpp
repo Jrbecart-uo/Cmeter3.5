@@ -138,7 +138,13 @@ static bool apply_status_json(const char* json) {
     statusData.valid = true;
 
     ui_update_status(&statusData);
-    if (ui_get_current_screen() != SCREEN_STATUS) ui_show_screen(SCREEN_STATUS);
+    // Show the status screen the first time data arrives; afterwards the
+    // rotation / tap decides which screen is up.
+    static bool first_status = true;
+    if (first_status) {
+        ui_show_screen(SCREEN_STATUS);
+        first_status = false;
+    }
     return true;
 }
 
@@ -307,6 +313,7 @@ void loop() {
     touch_read();
     lv_timer_handler();
     ui_tick_anim();
+    ui_tick_rotate();
     ui_event_tick();
     imu_tick();
     splash_tick();
