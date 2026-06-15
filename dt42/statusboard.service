@@ -1,0 +1,14 @@
+[Unit]
+Description=Statusboard uptime monitor (poller + dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/statusboard
+ExecStart=/usr/bin/python3 %h/statusboard/statusboard.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

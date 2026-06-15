@@ -300,7 +300,111 @@ pitch-shifted.
 
 ---
 
-## 8. Credits
+## 8. Web Status mode (dt42 status board)
+
+A second screen that turns the device into a **services status board** — a grid
+of green/red dots for websites, APIs, clusters, databases and machines — that
+the device **auto-rotates with the usage screen** (every 30 s; tap to advance).
+
+![Web Status screen](docs/img/web-status-screen.png)
+
+### 8.1 Architecture (end to end)
+
+```
+  targets.json  ──>  dt42 poller (statusboard.py)  ──>  status.json (HTTP :3004)
+   (what to                checks each target               │        │
+    monitor)                                                 │        └─> FAM web page
+                                                             │            (/admin/statusboard,
+                                                             │             pushed by the poller)
+                                                             v
+                              combined daemon (clawd-combined-serial.py)
+                                 fetches usage + status.json, builds a
+                                 FLAT line, writes it over USB serial
+                                                             v
+                                       ESP32 firmware ──> Web Status grid
+```
+
+- **`dt42/statusboard.py`** — a tiny dependency-free poller (runs on the host
+  `deepthought42`). It reads `targets.json`, checks every target on an interval,
+  serves `status.json` + a web dashboard on `:3004`, and *pushes* the snapshot to
+  the FAM web app(s) so the board is viewable in-app.
+- **`daemon/clawd-combined-serial.py`** — feeds BOTH Claude usage and the status
+  board to the device over the one USB-serial link (so two daemons never fight
+  over `/dev/ttyACM0`).
+- **Firmware** — `SCREEN_STATUS` renders the dot grid; rotation + tap live in
+  `ui.cpp` / `main.cpp`, gated by `CLAWD_STATUS_SCREEN` (see 8.4).
+
+### 8.2 The serial protocol (and why it's flat)
+
+The status line is a **flat** object — the item list is a delimited string, NOT
+a JSON array:
+
+```
+{"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...","lf":"! last fail: DB-prod  2026-06-15 10:15"}
+   sb : marker (1) so the firmware routes it to the status handler
+   g  : "short=state;..."   state 1=ok 0=down 2=unknown
+   lf : pre-formatted bottom "last fail" line
+```
+
+The firmware splits `g` with `strtok` (plain C) and drives a **pre-created grid
+of dot+label widgets** — it never allocates or parses a JSON array at runtime.
+This is deliberate: an on-device **JSON array parse hung the firmware**; doing
+the formatting in the daemon and sending flat scalars (the same shape as the
+usage payload) is what made it reliable.
+
+### 8.3 Configuring the target list (`targets.json`)
+
+The list lives in **`~/statusboard/targets.json` on dt42** (a sanitized copy is
+committed as **`dt42/targets.example.json`**). It is **re-read every poll cycle**
+— edit it and the change shows up on the device, the web dashboard and the FAM
+page within ~45 s, no restart.
+
+Each entry: `name` (full), `short` (the grid label — keep ≤ ~9 chars or it gets
+tight on the 4-column grid), and a check `type`:
+
+| `type` | Checks | Fields |
+|---|---|---|
+| `https` / `http` | GET the URL | `url`; one of `ok_below` (up if code < N), `ok_codes` (up if code ∈ list), `expect_body` (up if body contains text); `insecure:true` skips TLS verify |
+| `tcp` | open host:port | `host`, `port` |
+| `systemd_user` | `systemctl --user is-active` | `unit` |
+
+Top-level keys: `port` (web dashboard, 3004), `poll_interval`, `timeout`, and
+`pushes` (list of `{url, token}` FAM ingest endpoints — **holds the secret
+token, so the live file is git-ignored**; the example uses a placeholder).
+
+### 8.4 Enabling / disabling on the device
+
+`firmware/src/clawd_config.h`:
+
+```c
+#define CLAWD_STATUS_SCREEN 1   // 1 = Usage + Web Status (rotates); 0 = usage-only
+```
+
+Flip to `0` and re-flash for the original usage-only build (status lines ignored,
+no rotation, tap toggles the splash as before).
+
+### 8.5 Running it
+
+```bash
+# On the host with the device (combined usage + status):
+cp daemon/clawd-combined-serial.service ~/.config/systemd/user/
+systemctl --user disable --now clawd-usage.service statusboard-serial.service 2>/dev/null
+systemctl --user daemon-reload && systemctl --user enable --now clawd-combined-serial.service
+
+# On dt42 (the poller that owns targets.json + serves :3004 + pushes to FAM):
+cp dt42/targets.example.json ~/statusboard/targets.json   # then set the real token
+cp dt42/statusboard.py dt42/index.html ~/statusboard/
+cp dt42/statusboard.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now statusboard.service
+```
+
+Debug tip: `./screenshot.sh out.png` dumps the live framebuffer over serial —
+the only reliable way to see the screen, since native USB-CDC does **not** flush
+serial output before a firmware hang.
+
+---
+
+## 9. Credits
 
 - Upstream Clawdmeter concept & firmware: **@hermannbjorgvin**.
 - Clawd pixel-art animation: **@amaanbuilds**.

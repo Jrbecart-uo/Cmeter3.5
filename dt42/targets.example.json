@@ -1,0 +1,29 @@
+{
+  "port": 3004,
+  "poll_interval": 45,
+  "timeout": 8,
+  "pushes": [
+    { "url": "https://fam-staging.uottawa.ca/api/statusboard/ingest", "token": "REPLACE_WITH_YOUR_STATUSBOARD_TOKEN" },
+    { "url": "https://fam.uottawa.ca/api/statusboard/ingest", "token": "REPLACE_WITH_YOUR_STATUSBOARD_TOKEN" }
+  ],
+  "targets": [
+    { "name": "FAM (prod)",        "short": "fam",      "type": "https", "url": "https://fam.uottawa.ca",            "ok_below": 500 },
+    { "name": "FAM (pre-prod)",    "short": "fam-pp",   "type": "https", "url": "https://fam-pp.uottawa.ca",         "ok_below": 500 },
+    { "name": "uOttawa (www)",     "short": "uO",       "type": "https", "url": "https://www.uottawa.ca/",           "ok_below": 500 },
+    { "name": "TopDesk",           "short": "Td",       "type": "https", "url": "https://topdesk.uottawa.ca",        "ok_below": 500 },
+    { "name": "GitLab",            "short": "GtL",      "type": "tcp",   "host": "gitlab.uottawa.ca",   "port": 443 },
+    { "name": "Artifactory",       "short": "Art",      "type": "https", "url": "https://artifacts.uottawa.ca/artifactory/api/system/ping", "expect_body": "OK" },
+    { "name": "API GW (prod)",     "short": "apigw",    "type": "https", "url": "https://apigw.uottawa.ca",          "ok_below": 600 },
+    { "name": "API GW (pre-prod)", "short": "apigw-pp", "type": "https", "url": "https://apigw-preprod.uottawa.ca",  "ok_below": 600 },
+    { "name": "K8s (prod+pp)",     "short": "k8s",      "type": "https", "url": "https://10.32.168.20:6443/livez", "insecure": true, "ok_codes": [200, 401, 403] },
+    { "name": "MariaDB (prod)",    "short": "DB-prod",  "type": "https", "url": "https://fam.uottawa.ca/healthz/db",    "ok_codes": [200] },
+    { "name": "MariaDB (pre-prod)","short": "DB-pp",    "type": "https", "url": "https://fam-pp.uottawa.ca/healthz/db", "ok_codes": [200] },
+    { "name": "dt42 open-webui",   "short": "dt42:3000","type": "http",  "url": "http://localhost:3000",  "ok_below": 500 },
+    { "name": "dt42 vane",         "short": "dt42:3001","type": "http",  "url": "http://localhost:3001",  "ok_below": 500 },
+    { "name": "dt42 topdesk-ai",   "short": "dt42:3002","type": "https", "url": "https://localhost:3002", "insecure": true, "ok_below": 500 },
+    { "name": "dt42 poller",       "short": "poller",   "type": "systemd_user", "unit": "topdeskai-poller.service" },
+    { "name": "dt42 llama",        "short": "llama",    "type": "http",  "url": "http://localhost:8081/health", "ok_codes": [200] },
+    { "name": "CO2 computer",      "short": "co2",      "type": "tcp",   "host": "10.133.16.232", "port": 3389 },
+    { "name": "LN2 computer",      "short": "ln2",      "type": "tcp",   "host": "10.133.17.101", "port": 3389 }
+  ]
+}

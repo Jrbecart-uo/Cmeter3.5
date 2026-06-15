@@ -39,6 +39,20 @@ in real time with a coloured banner and a Warcraft-peasant voice line
 - Pixel-art "Clawd" splash animation (tap the screen to toggle).
 - USB-serial transport — no Bluetooth, no buttons, USB-powered. Token never
   leaves the host.
+- **Web Status mode** *(optional)* — a second screen showing a services status
+  board (websites, APIs, clusters, DB, machines) as a green/red dot grid, which
+  the device auto-rotates with the usage screen (tap to advance).
+
+## Web Status mode
+
+![Web Status screen](docs/img/web-status-screen.png)
+
+An optional second screen turns the device into a **services status board**. A
+poller (`dt42/statusboard.py`) checks a list of targets (`targets.json`) and a
+combined daemon feeds both Claude usage and the board to the device; the firmware
+rotates between them. Enable/disable with `CLAWD_STATUS_SCREEN` in
+`firmware/src/clawd_config.h`. Full details, the serial protocol, and how to edit
+the target list: **[`DOCUMENTATION.md` §8](DOCUMENTATION.md)**.
 
 ## Quick start
 

@@ -9,6 +9,7 @@
 #include "splash.h"
 #include "usage_rate.h"
 #include "sound.h"
+#include "clawd_config.h"
 
 // ---- Hardware objects ----
 // ST7796 over standard 4-wire SPI; the driver does HW rotation, so passing
@@ -23,7 +24,9 @@ XPowersPMU pmu;
 SensorQMI8658 imu;
 
 static UsageData usage = {};
+#if CLAWD_STATUS_SCREEN
 static StatusData statusData = {};
+#endif
 
 // ---- Touch shared state (FT6336, polled once per loop; no INT line used) ----
 static bool     touch_pressed = false;
@@ -120,6 +123,7 @@ static bool apply_usage_json(const char* json) {
 // ("name=state;name=state;...") split with strtok — plain C, NOT a JSON array
 // (a JSON array on-device hung the parse).
 //   {"sb":1,"g":"fam=1;DB-prod=0;...","lf":"! last fail: ln2  2026-06-15 09:42"}
+#if CLAWD_STATUS_SCREEN
 static bool apply_status_json(const char* json) {
     JsonDocument doc;
     if (deserializeJson(doc, json)) return false;
@@ -154,6 +158,7 @@ static bool apply_status_json(const char* json) {
     }
     return true;
 }
+#endif  // CLAWD_STATUS_SCREEN
 
 // Handle a Claude-session event line: {"ev":"task-complete"} etc.
 // Mirrors the game-sounds plugin's 5 categories — distinct sound + a
@@ -225,8 +230,10 @@ static void check_serial_cmd() {
                 // otherwise a usage payload.
                 if (handle_event_json(cmd_buf)) {
                     Serial.println("EVENT_OK");
+#if CLAWD_STATUS_SCREEN
                 } else if (apply_status_json(cmd_buf)) {
                     Serial.println("STATUS_OK");
+#endif
                 } else {
                     Serial.println(apply_usage_json(cmd_buf) ? "USAGE_OK" : "USAGE_ERR");
                 }
@@ -320,7 +327,9 @@ void loop() {
     touch_read();
     lv_timer_handler();
     ui_tick_anim();
+#if CLAWD_STATUS_SCREEN
     ui_tick_rotate();
+#endif
     ui_event_tick();
     imu_tick();
     splash_tick();

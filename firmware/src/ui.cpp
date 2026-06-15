@@ -4,6 +4,7 @@
 #include "logo.h"
 #include "icons.h"
 #include "display_cfg.h"
+#include "clawd_config.h"
 
 // Custom fonts (scaled for 314 PPI, ~1.9x from original 165 PPI)
 LV_FONT_DECLARE(font_tiempos_56);
@@ -436,10 +437,15 @@ void ui_tick_anim(void) {
 
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
 
-// A tap anywhere advances to the next info screen (Usage <-> Status).
+// A tap anywhere advances to the next info screen (Usage <-> Status), or
+// toggles the splash when the status screen is disabled.
 static void global_click_cb(lv_event_t* e) {
     (void)e;
+#if CLAWD_STATUS_SCREEN
     ui_rotate_next();
+#else
+    ui_toggle_splash();
+#endif
 }
 
 void ui_show_screen(screen_t screen) {
