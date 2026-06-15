@@ -1,0 +1,15 @@
+[Unit]
+Description=Clawdmeter status-board serial daemon (dt42 statusboard -> USB screen)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=STATUS_URL=http://localhost:3004/status.json
+Environment=PORT=/dev/ttyACM0
+Environment=POLL=30
+ExecStart=/usr/bin/python3 %h/Clawdmeter/daemon/statusboard-serial.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

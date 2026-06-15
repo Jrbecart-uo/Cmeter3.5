@@ -23,6 +23,7 @@ XPowersPMU pmu;
 SensorQMI8658 imu;
 
 static UsageData usage = {};
+static StatusData statusData = {};
 
 // ---- Touch shared state (FT6336, polled once per loop; no INT line used) ----
 static bool     touch_pressed = false;
@@ -115,6 +116,32 @@ static bool apply_usage_json(const char* json) {
     return true;
 }
 
+// Parse + apply a status-board payload: {"sb":[{"n":"fam","s":1},...],...}.
+// Returns false (so the caller falls through to usage parsing) if there's no
+// "sb" array. On success it switches the display to the status screen.
+static bool apply_status_json(const char* json) {
+    JsonDocument doc;
+    if (deserializeJson(doc, json)) return false;
+    if (!doc["sb"].is<JsonArray>()) return false;
+
+    statusData.count = 0;
+    for (JsonObject it : doc["sb"].as<JsonArray>()) {
+        if (statusData.count >= SB_MAX) break;
+        strlcpy(statusData.items[statusData.count].name, it["n"] | "?",
+                sizeof(statusData.items[0].name));
+        statusData.items[statusData.count].state = it["s"] | 2;
+        statusData.count++;
+    }
+    statusData.ok = doc["ok"] | 0;
+    statusData.down = doc["down"] | 0;
+    statusData.unk = doc["unk"] | 0;
+    statusData.valid = true;
+
+    ui_update_status(&statusData);
+    if (ui_get_current_screen() != SCREEN_STATUS) ui_show_screen(SCREEN_STATUS);
+    return true;
+}
+
 // Handle a Claude-session event line: {"ev":"task-complete"} etc.
 // Mirrors the game-sounds plugin's 5 categories — distinct sound + a
 // brief colored screen banner. Returns false if `ev` is missing.
@@ -139,7 +166,7 @@ static bool handle_event_json(const char* json) {
 }
 
 // Serial command buffer
-#define CMD_BUF_SIZE 256   // holds the usage JSON line pushed over serial
+#define CMD_BUF_SIZE 1024  // holds the usage JSON or the larger status-board line
 static char cmd_buf[CMD_BUF_SIZE];
 static int cmd_pos = 0;
 
@@ -181,9 +208,12 @@ static void check_serial_cmd() {
             if (strcmp(cmd_buf, "screenshot") == 0) {
                 send_screenshot();
             } else if (cmd_buf[0] == '{') {
-                // {"ev":...} = session event; otherwise a usage payload.
+                // {"ev":...} = session event; {"sb":[...]} = status board;
+                // otherwise a usage payload.
                 if (handle_event_json(cmd_buf)) {
                     Serial.println("EVENT_OK");
+                } else if (apply_status_json(cmd_buf)) {
+                    Serial.println("STATUS_OK");
                 } else {
                     Serial.println(apply_usage_json(cmd_buf) ? "USAGE_OK" : "USAGE_ERR");
                 }

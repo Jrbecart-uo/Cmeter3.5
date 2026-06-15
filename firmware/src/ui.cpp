@@ -53,6 +53,11 @@ static lv_obj_t* lbl_weekly_label;
 static lv_obj_t* lbl_weekly_reset;
 static lv_obj_t* lbl_anim;
 
+// ---- Status-board screen widgets ----
+static lv_obj_t* status_container;
+static lv_obj_t* lbl_status_title;
+static lv_obj_t* lbl_status;   // one recolor-enabled, wrapped label = the dot grid
+
 // ---- Logo (shared, on top) ----
 static lv_obj_t* logo_img;
 
@@ -267,6 +272,36 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
+// ======== Status-board Screen (480x320 landscape) ========
+// One recolor-enabled wrapped label renders the whole dot grid: each target's
+// short name is colored green (ok) / red (down) / grey (unknown). Low LVGL
+// surface area = far less to get wrong than N per-tile widgets.
+static void init_status_screen(lv_obj_t* scr) {
+    status_container = lv_obj_create(scr);
+    lv_obj_set_size(status_container, SCR_W, SCR_H);
+    lv_obj_set_pos(status_container, 0, 0);
+    lv_obj_set_style_bg_opa(status_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(status_container, 0, 0);
+    lv_obj_set_style_pad_all(status_container, 0, 0);
+    lv_obj_clear_flag(status_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(status_container, global_click_cb, LV_EVENT_CLICKED, NULL);
+
+    lbl_status_title = lv_label_create(status_container);
+    lv_label_set_text(lbl_status_title, "Status");
+    lv_obj_set_style_text_font(lbl_status_title, &font_styrene_28, 0);
+    lv_obj_set_style_text_color(lbl_status_title, COL_TEXT, 0);
+    lv_obj_align(lbl_status_title, LV_ALIGN_TOP_MID, 0, TITLE_Y);
+
+    lbl_status = lv_label_create(status_container);
+    lv_label_set_recolor(lbl_status, true);
+    lv_label_set_long_mode(lbl_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(lbl_status, CONTENT_W);
+    lv_obj_set_style_text_font(lbl_status, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_status, COL_DIM, 0);
+    lv_label_set_text(lbl_status, "waiting for status...");
+    lv_obj_align(lbl_status, LV_ALIGN_TOP_LEFT, MARGIN, CONTENT_Y);
+}
+
 // ======== Bluetooth Screen (480x320 landscape) ========
 
 // ======== Public API ========
@@ -282,6 +317,7 @@ void ui_init(void) {
     init_icon_dsc_rgb565a8(&logo_dsc, LOGO_WIDTH, LOGO_HEIGHT, logo_data);
 
     init_usage_screen(scr);
+    init_status_screen(scr);
     splash_init(scr);
 
     // Splash is touch-toggled — tap anywhere on the splash dismisses it
@@ -318,6 +354,22 @@ void ui_update(const UsageData* data) {
     lv_label_set_text(lbl_weekly_reset, buf);
 }
 
+void ui_update_status(const StatusData* data) {
+    if (!data->valid) return;
+
+    static char buf[SB_MAX * 28 + 96];
+    int n = 0;
+    n += snprintf(buf + n, sizeof(buf) - n,
+                  "#788c5d %d ok#   #c0392b %d down#   #b0aea5 %d unk#\n\n",
+                  data->ok, data->down, data->unk);
+    for (int i = 0; i < data->count && n < (int)sizeof(buf) - 40; i++) {
+        const char* col = data->items[i].state == 1 ? "788c5d"
+                        : data->items[i].state == 0 ? "c0392b" : "b0aea5";
+        n += snprintf(buf + n, sizeof(buf) - n, "#%s %s#   ", col, data->items[i].name);
+    }
+    lv_label_set_text(lbl_status, buf);
+}
+
 void ui_tick_anim(void) {
     if (current_screen != SCREEN_USAGE) return;
 
@@ -352,11 +404,13 @@ static void global_click_cb(lv_event_t* e) {
 
 void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(status_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
 
     switch (screen) {
     case SCREEN_SPLASH:     splash_show(); break;
     case SCREEN_USAGE:      lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_STATUS:     lv_obj_clear_flag(status_container, LV_OBJ_FLAG_HIDDEN); break;
     default: break;
     }
 
