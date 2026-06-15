@@ -116,25 +116,17 @@ static bool apply_usage_json(const char* json) {
     return true;
 }
 
-// Parse + apply a status-board payload: {"sb":[{"n":"fam","s":1},...],...}.
-// Returns false (so the caller falls through to usage parsing) if there's no
-// "sb" array. On success it switches the display to the status screen.
+// Apply a FLAT status-board payload — same scalar style as the usage payload
+// (no array/loop, which is what hung the status path):
+//   {"sb":1,"sum":"16 / 18 up","dn":"Down: DB-prod DB-pp","red":1}
 static bool apply_status_json(const char* json) {
     JsonDocument doc;
     if (deserializeJson(doc, json)) return false;
-    if (!doc["sb"].is<JsonArray>()) return false;
+    if (!doc["sb"].is<int>()) return false;   // marker; absent on usage lines
 
-    statusData.count = 0;
-    for (JsonObject it : doc["sb"].as<JsonArray>()) {
-        if (statusData.count >= SB_MAX) break;
-        strlcpy(statusData.items[statusData.count].name, it["n"] | "?",
-                sizeof(statusData.items[0].name));
-        statusData.items[statusData.count].state = it["s"] | 2;
-        statusData.count++;
-    }
-    statusData.ok = doc["ok"] | 0;
-    statusData.down = doc["down"] | 0;
-    statusData.unk = doc["unk"] | 0;
+    strlcpy(statusData.sum, doc["sum"] | "", sizeof(statusData.sum));
+    strlcpy(statusData.down, doc["dn"] | "", sizeof(statusData.down));
+    statusData.red = doc["red"].as<bool>();   // as<bool>() coerces 1/0 (| is strict)
     statusData.valid = true;
 
     ui_update_status(&statusData);

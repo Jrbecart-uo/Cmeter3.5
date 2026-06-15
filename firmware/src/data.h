@@ -11,18 +11,13 @@ struct UsageData {
     bool valid;              // false until first successful parse
 };
 
-// Status-board payload pushed by daemon/statusboard-serial.py:
-//   {"sb":[{"n":"fam","s":1},...],"ok":15,"down":2,"unk":1}  (s: 1=ok 0=down 2=unknown)
-#define SB_MAX 24
-
-struct StatusItem {
-    char name[16];
-    uint8_t state;           // 1=ok, 0=down, 2=unknown
-};
-
+// Status-board payload. The daemon does ALL the formatting and sends FLAT
+// scalars (exactly like the usage payload), so the firmware only extracts
+// strings — no array/loop, which is what hung the render:
+//   {"sb":1,"sum":"16 / 18 up","dn":"Down: DB-prod DB-pp","red":1}
 struct StatusData {
-    StatusItem items[SB_MAX];
-    int count;
-    int ok, down, unk;       // summary counts
+    char sum[48];    // headline, e.g. "16 / 18 up"
+    char down[256];  // "Down: ..." or "all systems OK"
+    bool red;        // true if anything is down (color the headline red)
     bool valid;
 };

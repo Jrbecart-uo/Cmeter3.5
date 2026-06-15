@@ -370,27 +370,14 @@ void ui_update(const UsageData* data) {
 }
 
 // DEBUG: show a checkpoint string on the status screen and force a synchronous
+// Mirror of ui_update(): drop pre-formatted scalars straight into existing
+// labels. The daemon already built the strings, so there's no array/loop here.
 void ui_update_status(const StatusData* data) {
     if (!data->valid) return;
     have_status = true;
-
-    char sum[48];
-    snprintf(sum, sizeof(sum), "%d / %d up", data->ok, data->count);
-    lv_label_set_text(lbl_status_sum, sum);
-    lv_obj_set_style_text_color(lbl_status_sum, data->down ? COL_RED : COL_GREEN, 0);
-
-    char down[256] = "Down: ";
-    size_t dn = strlen(down);
-    bool any = false;
-    for (int i = 0; i < data->count; i++) {
-        if (data->items[i].state != 1) {
-            dn += snprintf(down + dn, sizeof(down) - dn, "%s ", data->items[i].name);
-            any = true;
-            if (dn > sizeof(down) - 20) break;
-        }
-    }
-    if (!any) strcpy(down, "all systems OK");
-    lv_label_set_text(lbl_status_down, down);
+    lv_label_set_text(lbl_status_sum, data->sum);
+    lv_obj_set_style_text_color(lbl_status_sum, data->red ? COL_RED : COL_GREEN, 0);
+    lv_label_set_text(lbl_status_down, data->down);
 }
 
 void ui_tick_anim(void) {

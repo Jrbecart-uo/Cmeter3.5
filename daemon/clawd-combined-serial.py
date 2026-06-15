@@ -81,10 +81,14 @@ def status_payload():
     req = urllib.request.Request(STATUS_URL, headers={"User-Agent": "clawd-combined/1"})
     with urllib.request.urlopen(req, timeout=15) as r:
         st = json.loads(r.read().decode("utf-8", "replace"))
-    sb = [{"n": i.get("short", "?"), "s": STATE_NUM.get(i.get("state"), 2)} for i in st.get("items", [])]
-    return json.dumps({"sb": sb, "ok": sum(x["s"] == 1 for x in sb),
-                       "down": sum(x["s"] == 0 for x in sb), "unk": sum(x["s"] == 2 for x in sb)},
-                      separators=(",", ":"))
+    items = st.get("items", [])
+    total = len(items)
+    ok = sum(1 for i in items if i.get("state") == "ok")
+    down_names = [i.get("short", "?") for i in items if i.get("state") != "ok"]
+    sum_s = f"{ok} / {total} up"
+    down_s = ("Down: " + " ".join(down_names)) if down_names else "all systems OK"
+    return json.dumps({"sb": 1, "sum": sum_s, "dn": down_s[:160],
+                       "red": 1 if down_names else 0}, separators=(",", ":"))
 
 
 def configure_port(path):

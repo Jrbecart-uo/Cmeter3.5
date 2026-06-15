@@ -49,13 +49,16 @@ def fetch_status():
 
 
 def build_payload(status):
+    # Format everything HERE; the firmware only displays the finished strings
+    # via flat scalars, exactly like the usage payload (no array on-device).
     items = status.get("items", [])
-    sb = [{"n": it.get("short", "?"), "s": STATE_NUM.get(it.get("state"), 2)} for it in items]
-    ok = sum(1 for i in sb if i["s"] == 1)
-    down = sum(1 for i in sb if i["s"] == 0)
-    unk = sum(1 for i in sb if i["s"] == 2)
-    return json.dumps({"sb": sb, "ok": ok, "down": down, "unk": unk},
-                      separators=(",", ":"))
+    total = len(items)
+    ok = sum(1 for i in items if i.get("state") == "ok")
+    down_names = [i.get("short", "?") for i in items if i.get("state") != "ok"]
+    sum_s = f"{ok} / {total} up"
+    down_s = ("Down: " + " ".join(down_names)) if down_names else "all systems OK"
+    return json.dumps({"sb": 1, "sum": sum_s, "dn": down_s[:160],
+                       "red": 1 if down_names else 0}, separators=(",", ":"))
 
 
 def configure_port(path):

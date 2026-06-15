@@ -1,0 +1,15 @@
+[Unit]
+Description=Clawdmeter combined daemon (Claude usage + dt42 status board -> USB screen)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=STATUS_URL=http://10.136.128.10:3004/status.json
+Environment=PORT=/dev/ttyACM0
+Environment=POLL=30
+ExecStart=/usr/bin/python3 %h/tmp/Clawdmeter/daemon/clawd-combined-serial.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

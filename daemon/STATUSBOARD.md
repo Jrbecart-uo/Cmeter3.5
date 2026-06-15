@@ -1,46 +1,50 @@
-# Status-board mode (side screen)
+# Status-board mode (side screen) — WORKING
 
-Repurposes the Clawdmeter screen to show the dt42 **status board** (a grid of
-green/red/grey labels) instead of Claude usage. Two parts:
+Shows the dt42 **status board** on the Clawdmeter, rotating with the Claude
+usage screen. Verified on-device (screenshot-confirmed).
 
-## 1. Daemon (deployable now, tested)
-`daemon/statusboard-serial.py` reads the dt42 statusboard feed and pushes a
-compact line to the device over USB serial:
+## How it works
+The **daemon does all the formatting** and sends FLAT scalars (same style as the
+usage payload — the firmware never parses an array, which is what used to hang
+the render):
 
 ```
-{"sb":[{"n":"fam","s":1},{"n":"DB-prod","s":0},...],"ok":16,"down":2,"unk":0}
-   s: 1=ok  0=down  2=unknown
+{"sb":1,"sum":"16 / 18 up","dn":"Down: DB-prod DB-pp","red":1}
 ```
 
-Run it where the device is plugged in:
+Firmware: `SCREEN_STATUS` shows the headline (`sum`, red when `red`=1) + the
+`dn` line. It auto-rotates Usage <-> Status every 30s once both have data, and
+a **screen tap** advances immediately.
+
+## Recommended: the combined daemon (both screens, one process)
+`daemon/clawd-combined-serial.py` feeds BOTH Claude usage and the status board,
+so the two daemons never fight over `/dev/ttyACM0`.
+
 ```bash
-# dt42 (recommended, always-on) — reads its own local feed:
-STATUS_URL=http://localhost:3004/status.json python3 daemon/statusboard-serial.py /dev/ttyACM0
-# dry run (print payload, no device needed):
-DRY=1 python3 daemon/statusboard-serial.py
+cp daemon/clawd-combined-serial.service ~/.config/systemd/user/
+# disable the single-purpose ones first:
+systemctl --user disable --now clawd-usage.service statusboard-serial.service 2>/dev/null
+systemctl --user daemon-reload && systemctl --user enable --now clawd-combined-serial.service
 ```
-Install as a user service:
-```bash
-cp daemon/statusboard-serial.service ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now statusboard-serial.service
-```
-> Don't run this AND the usage daemon on the same device — they'd fight over
-> `/dev/ttyACM0` (both take the `/tmp/clawd-serial.lock`, so writes won't
-> corrupt, but the screen would flip between usage and status).
+Env in the unit: `STATUS_URL` (dt42 feed), `PORT=/dev/ttyACM0`, `POLL=30`.
 
-## 2. Firmware (compiles clean; runtime untested until flashed)
-This branch adds a `SCREEN_STATUS` screen. The device auto-switches to it the
-first time it receives an `{"sb":[...]}` line. Changes:
-`data.h` (StatusData), `ui.h`/`ui.cpp` (the status screen, one recolor label =
-the dot grid), `main.cpp` (parser + dispatcher branch, CMD_BUF_SIZE 256->1024).
+`daemon/statusboard-serial.py` (status only) is still available if you want just
+the board.
 
-Build & flash (per repo README):
+## Firmware build & flash
 ```bash
 ./.piovenv/bin/pio run -d firmware
 ./.piovenv/bin/pio run -d firmware -t upload --upload-port /dev/ttyACM0
 ```
-Verified to compile here (`pio run -d firmware` => [SUCCESS]); only the on-device
-rendering is unverified. If flashing/rendering misbehaves, say so and I'll fix.
-Names render colored (green=ok, red=down, grey=unknown); the small
-screen shows names + summary counts, while the web/FAM dashboards carry the
-last-failure timestamps.
+
+## Debug aid
+`./screenshot.sh out.png` dumps the live framebuffer over serial — invaluable
+for verifying the screen without eyes on the device.
+
+## Notes / gotchas
+- Native USB-CDC: serial output does NOT flush before a firmware hang, so debug
+  with `screenshot.sh` (or on-screen text), not Serial prints.
+- ArduinoJson `x["k"] | false` is strict — an integer `1` is NOT a bool, so read
+  flags with `.as<bool>()` (coerces 1/0). Same for `is<int>()` vs `is<bool>()`.
+- The board groups by status: headline `N / total up` + a red `Down: ...` line.
+  Full per-target detail + last-failure times live on the web/FAM dashboards.
