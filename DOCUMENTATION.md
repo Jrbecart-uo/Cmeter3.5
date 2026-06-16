@@ -402,6 +402,16 @@ Debug tip: `./screenshot.sh out.png` dumps the live framebuffer over serial —
 the only reliable way to see the screen, since native USB-CDC does **not** flush
 serial output before a firmware hang.
 
+### 8.6 Failure history
+
+The poller records each **failure episode** (down → recovery) per target in
+`history.json`, kept for **60 days** (capped 50/item), and exposes them in
+`status.json` under `history` plus a `fails` count per item. Both the dt42
+dashboard and the in-FAM `/admin/statusboard` page show a clickable **clock
+icon** on each tile (with a count badge) that opens a modal listing that item's
+past failures — down time, recovery, and duration. The ESP32 screen is
+unaffected (it shows live state only, not history).
+
 ---
 
 ## 9. Credits

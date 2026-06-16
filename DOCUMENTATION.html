@@ -416,6 +416,8 @@ cp dt42/statusboard.service ~/.config/systemd/user/
 systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now statusboard.service
 </code></pre>
 <p>Debug tip: <code>./screenshot.sh out.png</code> dumps the live framebuffer over serial — the only reliable way to see the screen, since native USB-CDC does <strong>not</strong> flush serial output before a firmware hang.</p>
+<h3 id="86-failure-history">8.6 Failure history</h3>
+<p>The poller records each <strong>failure episode</strong> (down → recovery) per target in <code>history.json</code>, kept for <strong>60 days</strong> (capped 50/item), and exposes them in <code>status.json</code> under <code>history</code> plus a <code>fails</code> count per item. Both the dt42 dashboard and the in-FAM <code>/admin/statusboard</code> page show a clickable <strong>clock icon</strong> on each tile (with a count badge) that opens a modal listing that item's past failures — down time, recovery, and duration. The ESP32 screen is unaffected (it shows live state only, not history).</p>
 <hr />
 <h2 id="9-credits">9. Credits</h2>
 <ul>
