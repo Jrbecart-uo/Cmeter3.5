@@ -28,10 +28,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG_FILE = os.path.join(HERE, "targets.json")
 STATE_FILE = os.path.join(HERE, "state.json")
+HISTORY_FILE = os.path.join(HERE, "history.json")
 INDEX_FILE = os.path.join(HERE, "index.html")
 
+HISTORY_DAYS = 60   # keep ~2 months of failure episodes per item
+HISTORY_MAX = 50    # cap episodes per item (newest kept)
+
 LOCK = threading.Lock()
-STATUS = {"generated": None, "items": []}
+STATUS = {"generated": None, "items": [], "history": {}}
 HEARTBEATS = {}  # short -> {"ts": int, "ok": bool}
 
 
@@ -63,6 +67,22 @@ def save_state(state):
     with open(tmp, "w") as f:
         json.dump(state, f)
     os.replace(tmp, STATE_FILE)
+
+
+def load_history():
+    # { short: [ {"down": epoch, "up": epoch|None, "detail": str}, ... ] }  newest first
+    try:
+        with open(HISTORY_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_history(history):
+    tmp = HISTORY_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(history, f)
+    os.replace(tmp, HISTORY_FILE)
 
 
 # ---- check primitives ----------------------------------------------------
@@ -143,6 +163,7 @@ def run_check(t, timeout):
 
 def poll_loop():
     state = load_state()
+    history = load_history()
     while True:
         try:
             cfg = load_cfg()
@@ -152,6 +173,7 @@ def poll_loop():
             continue
         timeout = cfg.get("timeout", 8)
         items = []
+        cutoff = now() - HISTORY_DAYS * 86400
         for t in cfg["targets"]:
             short = t["short"]
             try:
@@ -164,12 +186,24 @@ def poll_loop():
             if ok is True:
                 stt = "ok"
                 st["last_ok"] = ts
+                if prev == "down":  # recovered -> close the open episode
+                    eps = history.get(short)
+                    if eps and eps[0].get("up") is None:
+                        eps[0]["up"] = ts
             elif ok is False:
                 stt = "down"
-                if prev != "down":  # record the moment it went down
+                if prev != "down":  # went down -> start a new failure episode
                     st["last_failure"] = ts
+                    history.setdefault(short, []).insert(
+                        0, {"down": ts, "up": None, "detail": detail})
             else:
                 stt = "unknown"
+            # prune this item's history to the retention window + cap
+            if short in history:
+                history[short] = [e for e in history[short]
+                                  if e.get("down", 0) >= cutoff][:HISTORY_MAX]
+                if not history[short]:
+                    del history[short]
             st["state"] = stt
             st["checked_at"] = ts
             st["detail"] = detail
@@ -182,15 +216,26 @@ def poll_loop():
                 "last_ok": iso(st.get("last_ok")),
                 "last_failure": iso(st.get("last_failure")),
                 "checked_at": iso(ts),
+                "fails": len(history.get(short, [])),
             })
+        # display form of the history (epoch -> iso); only items with episodes
+        disp_hist = {
+            short: [
+                {"down": iso(e["down"]), "up": iso(e.get("up")), "detail": e.get("detail", "")}
+                for e in eps
+            ]
+            for short, eps in history.items() if eps
+        }
         with LOCK:
             STATUS["generated"] = iso(now())
             STATUS["items"] = items
+            STATUS["history"] = disp_hist
             snapshot = json.dumps(STATUS).encode()
         try:
             save_state(state)
+            save_history(history)
         except Exception as e:
-            print(f"[statusboard] cannot save state: {e}", flush=True)
+            print(f"[statusboard] cannot save state/history: {e}", flush=True)
         # Push to FAM so the in-app dashboard works when remote (dt42 -> FAM:443
         # is open; the reverse is not). Failure here never blocks polling.
         pushes = cfg.get("pushes")

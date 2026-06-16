@@ -34,3 +34,4 @@ firmware/.pio/
 # dt42 poller live config (contains the ingest token) + runtime state
 dt42/targets.json
 dt42/state.json
+dt42/history.json

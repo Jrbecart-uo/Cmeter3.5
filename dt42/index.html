@@ -27,11 +27,11 @@
   header .summary b.unk { color: var(--unk); }
   .grid {
     display: grid; gap: 14px; padding: 24px;
-    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   }
   .tile {
     background: var(--card); border: 1px solid var(--edge); border-radius: 12px;
-    padding: 16px; display: flex; align-items: center; gap: 14px;
+    padding: 16px; display: flex; align-items: center; gap: 14px; position: relative;
   }
   .dot {
     width: 26px; height: 26px; border-radius: 50%; flex: none;
@@ -41,13 +41,46 @@
   .dot.down { background: var(--down); box-shadow: 0 0 10px 1px rgba(231,76,60,.6); animation: pulse 1.4s infinite; }
   .dot.unknown { background: var(--unk); }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
-  .tx { min-width: 0; }
+  .tx { min-width: 0; flex: 1; }
   .tx .short { font-weight: 600; font-size: 15px; }
   .tx .name  { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tx .fail  { color: var(--down); font-size: 11.5px; margin-top: 3px; }
   .tx .detail{ color: var(--unk); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* history icon */
+  .hist {
+    background: none; border: none; color: var(--dim); cursor: pointer; flex: none;
+    padding: 4px; border-radius: 8px; display: flex; align-items: center; gap: 3px;
+    align-self: flex-start;
+  }
+  .hist:hover { color: var(--txt); background: rgba(255,255,255,.06); }
+  .hist .badge { font-size: 11px; font-weight: 700; color: var(--down); }
   footer { color: var(--dim); font-size: 12px; padding: 0 24px 24px; }
   .stale { color: var(--down); }
+  /* modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  }
+  .modal-overlay[hidden] { display: none; }
+  .modal {
+    background: var(--card); border: 1px solid var(--edge); border-radius: 14px;
+    width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column;
+  }
+  .modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--edge);
+  }
+  .modal-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .modal-head button { background: none; border: none; color: var(--dim); font-size: 24px; cursor: pointer; line-height: 1; }
+  .modal-body { padding: 8px 20px 20px; overflow-y: auto; }
+  .ep { padding: 12px 0; border-bottom: 1px solid var(--edge); }
+  .ep:last-child { border-bottom: none; }
+  .ep .when { font-size: 14px; }
+  .ep .when .lbl { color: var(--down); font-weight: 600; }
+  .ep .rec { color: var(--ok); }
+  .ep .ongoing { color: var(--down); }
+  .ep .meta2 { color: var(--dim); font-size: 12px; margin-top: 3px; }
+  .empty { color: var(--dim); padding: 16px 0; }
 </style>
 </head>
 <body>
@@ -59,28 +92,82 @@
   <div class="grid" id="grid"></div>
   <footer id="footer"></footer>
 
+  <div class="modal-overlay" id="modal" hidden>
+    <div class="modal">
+      <div class="modal-head"><h2 id="modal-title"></h2><button id="modal-close" title="Close">&times;</button></div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
 <script>
 const REFRESH_MS = 15000;
 let lastGood = 0;
+let lastData = { items: [], history: {} };
+
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function humanDur(fromIso, toIso) {
+  const a = new Date(String(fromIso).replace(" ", "T"));
+  const b = toIso ? new Date(String(toIso).replace(" ", "T")) : new Date();
+  let m = Math.max(0, Math.round((b - a) / 60000));
+  if (m < 60) return m + "m";
+  const h = Math.floor(m / 60); m = m % 60;
+  if (h < 24) return h + "h " + m + "m";
+  const d = Math.floor(h / 24);
+  return d + "d " + (h % 24) + "h";
+}
 
 function tile(it) {
-  const fail = it.last_failure
-    ? `<div class="fail">last fail: ${it.last_failure}</div>` : "";
-  const detail = it.detail ? `<div class="detail" title="${it.detail}">${it.detail}</div>` : "";
+  const fail = it.last_failure ? `<div class="fail">last fail: ${esc(it.last_failure)}</div>` : "";
+  const detail = it.detail ? `<div class="detail" title="${esc(it.detail)}">${esc(it.detail)}</div>` : "";
+  const n = it.fails || 0;
+  const badge = n ? `<span class="badge">${n}</span>` : "";
   return `<div class="tile">
-    <div class="dot ${it.state}" title="${it.state}"></div>
+    <div class="dot ${esc(it.state)}" title="${esc(it.state)}"></div>
     <div class="tx">
-      <div class="short">${it.short}</div>
-      <div class="name" title="${it.name}">${it.name}</div>
+      <div class="short">${esc(it.short)}</div>
+      <div class="name" title="${esc(it.name)}">${esc(it.name)}</div>
       ${fail}${detail}
     </div>
+    <button class="hist" data-short="${esc(it.short)}" title="Failure history (60 days)">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>${badge}
+    </button>
   </div>`;
 }
+
+function openHistory(short) {
+  const eps = (lastData.history || {})[short] || [];
+  document.getElementById("modal-title").textContent = short + " — failure history";
+  const body = document.getElementById("modal-body");
+  if (!eps.length) {
+    body.innerHTML = `<div class="empty">No failures recorded in the last 60 days. ✓</div>`;
+  } else {
+    body.innerHTML = eps.map(e => {
+      const rec = e.up
+        ? `<span class="rec">recovered ${esc(e.up)}</span> &middot; down ${humanDur(e.down, e.up)}`
+        : `<span class="ongoing">still down</span> &middot; ${humanDur(e.down, null)} so far`;
+      const det = e.detail ? `<div class="meta2">${esc(e.detail)}</div>` : "";
+      return `<div class="ep"><div class="when"><span class="lbl">DOWN</span> ${esc(e.down)} &nbsp;|&nbsp; ${rec}</div>${det}</div>`;
+    }).join("");
+  }
+  document.getElementById("modal").hidden = false;
+}
+function closeModal() { document.getElementById("modal").hidden = true; }
+
+document.getElementById("grid").addEventListener("click", e => {
+  const b = e.target.closest(".hist");
+  if (b) openHistory(b.dataset.short);
+});
+document.getElementById("modal-close").addEventListener("click", closeModal);
+document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 
 async function refresh() {
   try {
     const r = await fetch("status.json", { cache: "no-store" });
     const d = await r.json();
+    lastData = d;
     const items = d.items || [];
     document.getElementById("grid").innerHTML = items.map(tile).join("");
     const ok = items.filter(i => i.state === "ok").length;
@@ -91,7 +178,7 @@ async function refresh() {
     document.getElementById("updated").textContent = "polled " + (d.generated || "?");
     lastGood = Date.now();
     document.getElementById("footer").textContent =
-      `Auto-refresh ${REFRESH_MS/1000}s. Source: statusboard on dt42.`;
+      `Auto-refresh ${REFRESH_MS/1000}s. Click the clock on a tile for its failure history (last 60 days).`;
   } catch (e) {
     const stale = Math.round((Date.now() - lastGood) / 1000);
     document.getElementById("footer").innerHTML =
