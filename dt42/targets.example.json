@@ -6,6 +6,7 @@
     { "url": "https://your-app.example.com/api/statusboard/ingest", "token": "REPLACE_WITH_YOUR_STATUSBOARD_TOKEN" }
   ],
   "targets": [
+    { "name": "Claude API",         "short": "claude", "type": "https", "url": "https://api.anthropic.com/v1/messages",         "ok_codes": [200, 401, 405] },
     { "name": "Example site",       "short": "site",   "type": "https", "url": "https://example.com",                          "ok_below": 500 },
     { "name": "Example API",        "short": "api",    "type": "https", "url": "https://api.example.com",                      "ok_below": 600 },
     { "name": "Health endpoint",    "short": "health", "type": "https", "url": "https://app.example.com/healthz",              "ok_codes": [200] },
