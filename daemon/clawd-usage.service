@@ -18,16 +18,19 @@
 Description=Clawdmeter usage daemon (Anthropic rate-limit poll -> ESP32 USB serial)
 After=network-online.target
 Wants=network-online.target
+# /dev/ttyACM0 comes and goes with usbipd — don't give up after N restarts.
+# (Belongs in [Unit]; systemd silently ignores it under [Service].)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=__REPO__
 ExecStart=/usr/bin/python3 __REPO__/daemon/claude-usage-serial.py /dev/ttyACM0
 # Daemon loops internally and never exits on its own; Restart is a crash net.
+# It also self-heals the usbipd attach on serial-write failures (detach+reattach).
+# Disable with HEAL=0; override USBIPD_EXE / USBIPD_WSL_DISTRO / USBIPD_HWID.
 Restart=always
 RestartSec=10
-# /dev/ttyACM0 comes and goes with usbipd — don't give up after N restarts.
-StartLimitIntervalSec=0
 StandardOutput=append:/tmp/claude-usage.log
 StandardError=append:/tmp/claude-usage.log
 
