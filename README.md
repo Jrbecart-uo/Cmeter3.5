@@ -84,3 +84,17 @@ Claude-event hooks are configured in `~/.claude/settings.json`
 - **Event sound effects:** the **game-sounds** Claude Code plugin (citedy) — warcraft pack.
 - **ESP32-S3-Touch-LCD-3.5 port** (ST7796/FT6336, USB-serial, audio + event
   notifications): Jean-Roch Bécart.
+
+## License
+
+This fork's contributions are released under the [MIT License](LICENSE)
+(© 2026 Jean-Roch Bécart).
+
+> **Upstream caveat:** the upstream project
+> [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) ships **without a
+> license**, which under default copyright means "all rights reserved." The MIT
+> license here therefore covers **only the changes original to this fork** (the
+> ST7796/FT6336 port, USB-serial daemon, audio + event notifications, Web Status
+> mode); it does **not** and cannot relicense the upstream-derived code. If you
+> intend to redistribute, seek permission from the upstream author for those
+> parts.
