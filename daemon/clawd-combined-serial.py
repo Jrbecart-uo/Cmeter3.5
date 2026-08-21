@@ -17,6 +17,8 @@ import fcntl
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.request
@@ -28,6 +30,32 @@ PORT = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("PORT", "/dev/ttyACM
 POLL = int(os.environ.get("POLL", "30"))
 STATUS_URL = os.environ.get("STATUS_URL", "http://10.136.128.10:3004/status.json")
 DRY = bool(os.environ.get("DRY"))
+
+# --- usbipd self-heal (WSL2), same scheme as claude-usage-serial.py ----------
+# The logon task's `usbipd attach --auto-attach` watcher can silently die; a
+# later replug then never reaches WSL (/dev/ttyACM0 missing, or present but
+# unwritable -> EACCES). Any OSError from the *serial write* — including
+# FileNotFoundError and PermissionError — triggers a detach->reattach cycle.
+# Network errors never do. Disable with HEAL=0.
+HEAL = os.environ.get("HEAL", "1").lower() not in ("0", "", "false", "no")
+USBIPD_HWID = os.environ.get("USBIPD_HWID", "303a:1001")
+USBIPD_WSL_DISTRO = (os.environ.get("USBIPD_WSL_DISTRO")
+                     or os.environ.get("WSL_DISTRO_NAME") or "Ubuntu-24.04")
+HEAL_COOLDOWN = int(os.environ.get("HEAL_COOLDOWN", "45"))  # min s between heals
+_last_heal = 0.0
+
+
+def find_usbipd():
+    cand = os.environ.get("USBIPD_EXE")
+    if cand and Path(cand).exists():
+        return cand
+    default = "/mnt/c/Program Files/usbipd-win/usbipd.exe"
+    if Path(default).exists():
+        return default
+    return shutil.which("usbipd.exe")
+
+
+USBIPD = find_usbipd()
 CREDS = Path.home() / ".claude" / ".credentials.json"
 API_URL = "https://api.anthropic.com/v1/messages"
 BODY = json.dumps({"model": "claude-haiku-4-5-20251001", "max_tokens": 1,
@@ -117,19 +145,88 @@ def send(line):
             fcntl.flock(lk, fcntl.LOCK_UN)
 
 
+def _run(cmd, timeout=30):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
+    except Exception as e:  # noqa: BLE001 — usbipd/interop hiccups must not kill us
+        return -1, repr(e)
+
+
+def wait_stable(path, appear=15, stable=4):
+    """Wait for `path` to appear and then persist `stable`s (ride out the
+    -104 reset burst that follows a fresh attach)."""
+    deadline = time.time() + appear
+    while time.time() < deadline:
+        if os.path.exists(path):
+            ok = True
+            for _ in range(stable):
+                time.sleep(1)
+                if not os.path.exists(path):
+                    ok = False
+                    break
+            if ok:
+                return True
+        time.sleep(1)
+    return False
+
+
+def reattach():
+    """usbipd detach->reattach, then wait for a stable port. Cooldown-guarded
+    so a genuinely-unplugged device doesn't get hammered every poll."""
+    global _last_heal
+    if not HEAL:
+        return False
+    if not USBIPD:
+        log("heal: usbipd.exe not found (set USBIPD_EXE) — cannot self-heal")
+        return False
+    now = time.time()
+    if now - _last_heal < HEAL_COOLDOWN:
+        return False
+    _last_heal = now
+    log(f"heal: usbipd detach/reattach {USBIPD_HWID} -> {USBIPD_WSL_DISTRO}")
+    _run([USBIPD, "detach", "--hardware-id", USBIPD_HWID])
+    time.sleep(2)
+    # One-shot attach (no --auto-attach: that flag blocks forever).
+    rc, out = _run([USBIPD, "attach", "--wsl", USBIPD_WSL_DISTRO,
+                    "--hardware-id", USBIPD_HWID])
+    if rc != 0:
+        log(f"heal: attach rc={rc} {out[:200]}")
+    if wait_stable(PORT):
+        log(f"heal: {PORT} back and stable")
+        return True
+    log(f"heal: {PORT} did not come back (device unplugged/powered off?)")
+    return False
+
+
+def send_healing(line):
+    """Serial write; any OSError (missing port, EACCES, dead USB link) heals
+    the usbipd attach and retries once."""
+    try:
+        send(line)
+        return True
+    except OSError as e:
+        log(f"{PORT} write failed ({e!r}) — attempting usbipd reattach")
+        if reattach():
+            send(line)  # let a second failure surface to the caller's log
+            return True
+        return False
+
+
 def main():
-    log(f"port={PORT} poll={POLL}s status_url={STATUS_URL} dry={DRY}")
+    log(f"port={PORT} poll={POLL}s status_url={STATUS_URL} dry={DRY} "
+        f"heal={'on' if (HEAL and USBIPD) else 'off'} usbipd={USBIPD}")
     while True:
         for label, fn in (("usage", usage_payload), ("status", status_payload)):
             try:
+                # Payload build first: network errors land in the generic
+                # handler below and must NOT trigger a usbipd reattach.
                 p = fn()
                 if p:
-                    send(p)
-                    log(f"{label} sent ({len(p)}B)")
+                    if send_healing(p):
+                        log(f"{label} sent ({len(p)}B)")
                 else:
                     log(f"{label} unavailable (skipped)")
-            except FileNotFoundError:
-                log(f"{PORT} not found - device attached?")
             except Exception as e:  # noqa: BLE001
                 log(f"{label} error: {e!r}")
             time.sleep(0.4)  # small gap so the two lines don't coalesce

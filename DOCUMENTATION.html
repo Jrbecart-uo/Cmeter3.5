@@ -311,6 +311,10 @@ firing.</p>
 <td>usbipd detached. One-off: <code>usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;</code> (Windows admin PS). Permanent: run <code>usbipd-autoattach.ps1 -RunAsUser "&lt;domain&gt;\&lt;you&gt;"</code> once (§3.2).</td>
 </tr>
 <tr>
+<td>Daemon logs <code>PermissionError(13)</code> / <code>FileNotFoundError</code> every poll after a replug; device <code>Shared</code> but not <code>Attached</code></td>
+<td>The logon task's <code>--auto-attach</code> watcher died, so the replug never reached WSL. The combined daemon self-heals this (detach→reattach on any serial-write <code>OSError</code>) within one poll — check its journal for <code>heal:</code> lines. If heal is off/failing: one-off <code>usbipd attach</code> (non-elevated user PS) and check <code>heal=on</code> + a valid <code>usbipd=</code> path in the daemon's startup log.</td>
+</tr>
+<tr>
 <td>Dashboard shows dashes</td>
 <td>Daemon not running / token missing. Check <code>/tmp/claude-usage.log</code>; ensure Claude Code is logged in.</td>
 </tr>
@@ -375,7 +379,7 @@ pitch-shifted.</p>
 </code></pre>
 <ul>
 <li><strong><code>dt42/statusboard.py</code></strong> — a dependency-free poller (runs on the host <code>deepthought42</code>). Reads <code>targets.json</code>, checks every target on an interval, serves <code>status.json</code> + a web dashboard on <code>:3004</code>, and <em>pushes</em> the snapshot to the FAM web app(s) so the board is viewable in-app (<code>/admin/statusboard</code>).</li>
-<li><strong><code>daemon/clawd-combined-serial.py</code></strong> — feeds BOTH Claude usage and the status board over the one USB-serial link (so two daemons never fight over <code>/dev/ttyACM0</code>).</li>
+<li><strong><code>daemon/clawd-combined-serial.py</code></strong> — feeds BOTH Claude usage and the status board over the one USB-serial link (so two daemons never fight over <code>/dev/ttyACM0</code>). Includes the usbipd <strong>self-heal</strong>: any <code>OSError</code> on the serial write (port missing, <code>PermissionError</code>/EACCES, dead USB-over-IP link) triggers a cooldown-guarded <code>usbipd</code> detach → one-shot attach → wait-for-stable-port cycle, then one retry. Network errors never trigger it. <code>HEAL=0</code> disables; <code>USBIPD_EXE</code>, <code>USBIPD_WSL_DISTRO</code>, <code>USBIPD_HWID</code>, <code>HEAL_COOLDOWN</code> override. Startup log shows <code>heal=on usbipd=&lt;path&gt;</code>.</li>
 <li><strong>Firmware</strong> — <code>SCREEN_STATUS</code> renders the dot grid; rotation + tap live in <code>ui.cpp</code> / <code>main.cpp</code>, gated by <code>CLAWD_STATUS_SCREEN</code> (see 8.4).</li>
 </ul>
 <h3 id="82-the-serial-protocol-and-why-its-flat">8.2 The serial protocol (and why it's flat)</h3>

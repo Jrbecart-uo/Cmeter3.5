@@ -45,7 +45,10 @@ data.h / usage_rate.* / icons.h / logo.h / font_*.c
 lib/            — vendored: GFX_Library_for_Arduino 1.5.5 (Waveshare ST7796, SPI patched),
                   TCA9554, es8311
 daemon/         — host side (run in WSL2):
-  claude-usage-serial.py  usage poller → USB serial (stdlib only, flock-guarded)
+  clawd-combined-serial.py  ACTIVE daemon (clawd-combined-serial.service): usage +
+                            dt42 status board → USB serial; usbipd self-heal on any
+                            serial-write OSError (incl. PermissionError after replug)
+  claude-usage-serial.py  superseded usage-only poller (stdlib only, flock-guarded)
   clawd-event.sh          Claude Code hook → {"ev":NAME} → serial (hook-safe, exit 0)
 ```
 

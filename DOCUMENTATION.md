@@ -263,6 +263,7 @@ Tap the screen to toggle the **splash creature** ↔ the **usage dashboard**.
 | Symptom | Cause / fix |
 |---|---|
 | No `/dev/ttyACM0` (usage stops updating) | usbipd detached (replug/reboot/flash re-enumerated the device). One-off fix: `usbipd attach --wsl <Distro> --busid <BUSID>` (Windows admin PS). Permanent fix: run `usbipd-autoattach.ps1` once (§3.2). Then restart the daemon (next row). |
+| Daemon logs `PermissionError(13)` (or `FileNotFoundError`) every poll after a replug; usbipd shows the device `Shared` but not `Attached` | The logon task's `--auto-attach` watcher died, so the replug never reached WSL. The combined daemon self-heals this (detach→reattach on any serial-write `OSError`) within one poll — check its journal for `heal:` lines. If heal is off/failing: one-off `usbipd attach --wsl <Distro> --busid <BUSID>` (non-elevated user PS), and check `heal=on` + a valid `usbipd=` path in the daemon's startup log line. |
 | Auto-attach Scheduled Task is `Running` but `/dev/ttyACM0` never appears | Task is executing under the wrong user account (typical on AD/corp machines where UAC elevates to a different admin account). WSL2 distros are per-user, so the task can't reach yours. Re-run `usbipd-autoattach.ps1 -RunAsUser "<domain>\<your-user>"` (§3.2). Verify with `(Get-ScheduledTask usbipd-esp32).Principal.UserId` — must match the account that owns the WSL distro. |
 | After reboot/logon, task says `State: Running` but `LastRunTime` is stale (days old) and busid stays `Shared` | The AtLogOn trigger didn't fire — on AD machines the logon-event principal can be reported as SID / UPN / `DOMAIN\user` variants, and a trigger `-User` filter that string-matches one variant silently fails for the others. The bundled script now omits `-User` from the trigger; if you have an older registered task, re-run `usbipd-autoattach.ps1 -RunAsUser "<domain>\<your-user>"` to overwrite it. One-shot recovery (no re-register needed): `Stop-ScheduledTask usbipd-esp32; Start-ScheduledTask usbipd-esp32` in an Admin PS. |
 | `usbipd attach: Unrecognized command or argument 'Ubuntu-24.04'` | usbipd-win ≥ 5.x changed syntax: distro is now `--wsl <Name>`, not `--wsl --distribution <Name>`. The bundled script uses the new form; if you're invoking manually, drop `--distribution`. |
@@ -330,7 +331,13 @@ the device **auto-rotates with the usage screen** (every 30 s; tap to advance).
   the FAM web app(s) so the board is viewable in-app.
 - **`daemon/clawd-combined-serial.py`** — feeds BOTH Claude usage and the status
   board to the device over the one USB-serial link (so two daemons never fight
-  over `/dev/ttyACM0`).
+  over `/dev/ttyACM0`). Includes the same **usbipd self-heal** as the old usage
+  daemon: any `OSError` on the serial write (port missing, `PermissionError`/
+  EACCES, dead USB-over-IP link) triggers a cooldown-guarded
+  `usbipd detach` → one-shot `attach` → wait-for-stable-port cycle, then one
+  retry. Network errors never trigger it. `HEAL=0` disables; `USBIPD_EXE`,
+  `USBIPD_WSL_DISTRO`, `USBIPD_HWID`, `HEAL_COOLDOWN` override. Startup log
+  shows `heal=on usbipd=<path>`.
 - **Firmware** — `SCREEN_STATUS` renders the dot grid; rotation + tap live in
   `ui.cpp` / `main.cpp`, gated by `CLAWD_STATUS_SCREEN` (see 8.4).
 
