@@ -66,6 +66,11 @@ static lv_obj_t* sb_dot[SB_CELLS];
 static lv_obj_t* sb_cell_lbl[SB_CELLS];
 static lv_obj_t* lbl_status_lf;     // bottom "last fail" line
 
+// ---- Corner clock (host-formatted "8:23am · 04", one label per screen) ----
+static lv_obj_t* lbl_usage_clock;
+static lv_obj_t* lbl_status_clock;
+static lv_obj_t* lbl_status_sum;    // top-right "N up · M down" summary
+
 // ---- Logo (shared, on top) ----
 static lv_obj_t* logo_img;
 
@@ -135,6 +140,14 @@ static const char* const anim_messages[] = {
     "Working", "Wrangling",
 };
 #define ANIM_MSG_COUNT (sizeof(anim_messages) / sizeof(anim_messages[0]))
+
+// Either payload (usage or status) may carry the clock; update both screens'
+// corner labels so whichever is visible stays current.
+static void set_clock_labels(const char* clk) {
+    if (!clk || !clk[0]) return;
+    lv_label_set_text(lbl_usage_clock, clk);
+    lv_label_set_text(lbl_status_clock, clk);
+}
 
 static lv_color_t pct_color(float pct) {
     if (pct >= 80.0f) return COL_RED;
@@ -251,9 +264,10 @@ static void make_usage_panel(lv_obj_t* parent, int x, int y, const char* pill_te
 
     *out_reset = lv_label_create(panel);
     lv_label_set_text(*out_reset, "---");
-    lv_obj_set_style_text_font(*out_reset, &font_styrene_24, 0);
+    // styrene_20: "Resets in 18h 36m" at 24px overflowed the 185px inner width
+    lv_obj_set_style_text_font(*out_reset, &font_styrene_20, 0);
     lv_obj_set_style_text_color(*out_reset, COL_DIM, 0);
-    lv_obj_set_pos(*out_reset, 0, 144);
+    lv_obj_set_pos(*out_reset, 0, 146);
 }
 
 static void init_usage_screen(lv_obj_t* scr) {
@@ -284,6 +298,12 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_font(lbl_anim, &font_mono_18, 0);
     lv_obj_set_style_text_color(lbl_anim, COL_ACCENT, 0);
     lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -10);
+
+    lbl_usage_clock = lv_label_create(usage_container);
+    lv_label_set_text(lbl_usage_clock, "");
+    lv_obj_set_style_text_font(lbl_usage_clock, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_usage_clock, COL_DIM, 0);
+    lv_obj_align(lbl_usage_clock, LV_ALIGN_BOTTOM_RIGHT, -MARGIN, -10);
 }
 
 // ======== Status-board Screen (480x320 landscape) ========
@@ -306,7 +326,8 @@ static void init_status_screen(lv_obj_t* scr) {
     lv_label_set_text(lbl_status_title, "Web Status");
     lv_obj_set_style_text_font(lbl_status_title, &font_styrene_28, 0);
     lv_obj_set_style_text_color(lbl_status_title, COL_TEXT, 0);
-    lv_obj_align(lbl_status_title, LV_ALIGN_TOP_MID, 0, 8);
+    // Left-aligned: the centered title collided with the top-right summary
+    lv_obj_align(lbl_status_title, LV_ALIGN_TOP_LEFT, MARGIN, 8);
 
     const int COLS = 4, CW = 116, X0 = MARGIN, Y0 = 52, RH = 40;
     for (int i = 0; i < SB_CELLS; i++) {
@@ -332,9 +353,26 @@ static void init_status_screen(lv_obj_t* scr) {
 
     lbl_status_lf = lv_label_create(status_container);
     lv_obj_set_pos(lbl_status_lf, X0, 292);
+    // Cap the width so a long "last fail" line can't run under the corner
+    // clock; overflow is elided with "..." by LVGL.
+    lv_obj_set_width(lbl_status_lf, 330);
+    lv_label_set_long_mode(lbl_status_lf, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(lbl_status_lf, &font_mono_18, 0);
     lv_obj_set_style_text_color(lbl_status_lf, COL_AMBER, 0);
     lv_label_set_text(lbl_status_lf, "waiting for status...");
+
+    lbl_status_clock = lv_label_create(status_container);
+    lv_label_set_text(lbl_status_clock, "");
+    lv_obj_set_style_text_font(lbl_status_clock, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_status_clock, COL_DIM, 0);
+    lv_obj_align(lbl_status_clock, LV_ALIGN_BOTTOM_RIGHT, -MARGIN, -8);
+
+    lbl_status_sum = lv_label_create(status_container);
+    lv_label_set_text(lbl_status_sum, "");
+    // mono_18: styrene_16 is ASCII-only and the summary uses U+00B7 "·"
+    lv_obj_set_style_text_font(lbl_status_sum, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_status_sum, COL_DIM, 0);
+    lv_obj_align(lbl_status_sum, LV_ALIGN_TOP_RIGHT, -MARGIN, 16);
 }
 
 // ======== Bluetooth Screen (480x320 landscape) ========
@@ -388,6 +426,8 @@ void ui_update(const UsageData* data) {
 
     format_reset_time(data->weekly_reset_mins, buf, sizeof(buf));
     lv_label_set_text(lbl_weekly_reset, buf);
+
+    set_clock_labels(data->clk);
 }
 
 // Update the dot grid: set each cell's color (green/red/grey) + name + show it;
@@ -409,6 +449,26 @@ void ui_update_status(const StatusData* data) {
         }
     }
     lv_label_set_text(lbl_status_lf, data->lastfail[0] ? data->lastfail : "all systems OK");
+
+    // Top-right summary, counted from the states we just applied. Green when
+    // everything is up, red the moment anything is down (readable across the
+    // desk without reading dot labels).
+    int up = 0, down = 0, unk = 0;
+    for (int i = 0; i < data->count; i++) {
+        if      (data->items[i].state == 1) up++;
+        else if (data->items[i].state == 0) down++;
+        else                                unk++;
+    }
+    static char sum[40];
+    if (unk > 0)
+        snprintf(sum, sizeof(sum), "%d up \xC2\xB7 %d down \xC2\xB7 %d ?", up, down, unk);
+    else
+        snprintf(sum, sizeof(sum), "%d up \xC2\xB7 %d down", up, down);
+    lv_label_set_text(lbl_status_sum, sum);
+    lv_obj_set_style_text_color(lbl_status_sum, down > 0 ? COL_RED : COL_GREEN, 0);
+    lv_obj_set_style_text_color(lbl_status_title, down > 0 ? COL_RED : COL_TEXT, 0);
+
+    set_clock_labels(data->clk);
 }
 
 void ui_tick_anim(void) {

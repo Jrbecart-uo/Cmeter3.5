@@ -347,11 +347,19 @@ The status line is a **flat** object — the item list is a delimited string, NO
 a JSON array:
 
 ```
-{"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...","lf":"! last fail: DB-prod  2026-06-15 10:15"}
+{"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...","lf":"! last fail: DB-prod  2026-06-15 10:15","clk":"8:23am · 04"}
    sb : marker (1) so the firmware routes it to the status handler
    g  : "short=state;..."   state 1=ok 0=down 2=unknown
-   lf : pre-formatted bottom "last fail" line
+   lf : pre-formatted bottom "last fail" line; when all green it carries the
+        last poller check time ("all systems OK @ 8:23am")
+   clk: host-formatted corner clock, "time · day-of-month" (device has no RTC;
+        also sent on usage payloads — either one refreshes both screens'
+        bottom-right corner). Raw UTF-8 (ensure_ascii=False), 12h no leading 0.
 ```
+
+On-device the status screen also shows a top-right **"N up · M down"** summary
+counted from `g` — green when everything is up, red (with the title) the moment
+anything is down.
 
 The firmware splits `g` with `strtok` (plain C) and drives a **pre-created grid
 of dot+label widgets** — it never allocates or parses a JSON array at runtime.

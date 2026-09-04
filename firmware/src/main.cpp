@@ -90,6 +90,7 @@ static bool parse_json(const char* json, UsageData* out) {
     out->weekly_pct = doc["w"] | 0.0f;
     out->weekly_reset_mins = doc["wr"] | -1;
     strlcpy(out->status, doc["st"] | "unknown", sizeof(out->status));
+    strlcpy(out->clk, doc["clk"] | "", sizeof(out->clk));
     out->ok = doc["ok"] | false;
     out->valid = true;
     return true;
@@ -130,6 +131,7 @@ static bool apply_status_json(const char* json) {
     if (!doc["sb"].is<int>()) return false;   // marker; absent on usage lines
 
     strlcpy(statusData.lastfail, doc["lf"] | "", sizeof(statusData.lastfail));
+    strlcpy(statusData.clk, doc["clk"] | "", sizeof(statusData.clk));
 
     static char gbuf[640];
     strlcpy(gbuf, doc["g"] | "", sizeof(gbuf));

@@ -7,6 +7,7 @@ struct UsageData {
     float weekly_pct;        // 7-day window utilization (0-100)
     int weekly_reset_mins;   // minutes until weekly resets
     char status[16];         // "allowed" or "limited"
+    char clk[20];            // host-formatted corner clock, e.g. "8:23am · 04"
     bool ok;                 // data parse succeeded
     bool valid;              // false until first successful parse
 };
@@ -26,5 +27,6 @@ struct StatusData {
     StatusItem items[SB_MAX];
     int count;
     char lastfail[56];       // pre-formatted bottom line
+    char clk[20];            // host-formatted corner clock, e.g. "8:23am · 04"
     bool valid;
 };

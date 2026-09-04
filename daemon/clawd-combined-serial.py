@@ -67,6 +67,16 @@ def log(m):
     print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+def fmt_clock(t=None):
+    """'8:23am' — 12h, no leading zero (device has no RTC; host formats)."""
+    return time.strftime("%I:%M%p", t or time.localtime()).lower().lstrip("0")
+
+
+def clk_string():
+    """Bottom-right corner string for the device: '8:23am · 04' (time + day)."""
+    return f"{fmt_clock()} · {time.strftime('%d')}"
+
+
 # ---- usage ----
 def read_token():
     try:
@@ -101,7 +111,8 @@ def usage_payload():
     st = g("anthropic-ratelimit-unified-5h-status") or "unknown"
     return json.dumps({"s": round(u5 * 100), "sr": max(0, round((r5 - now) / 60)) if r5 else 0,
                        "w": round(u7 * 100), "wr": max(0, round((r7 - now) / 60)) if r7 else 0,
-                       "st": str(st).strip(), "ok": True}, separators=(",", ":"))
+                       "st": str(st).strip(), "ok": True,
+                       "clk": clk_string()}, separators=(",", ":"), ensure_ascii=False)
 
 
 # ---- status ----
@@ -123,8 +134,18 @@ def build_status_line(st):
         fails.sort(key=lambda x: x[1], reverse=True)
         lf = f"! last fail: {fails[0][0]}  {fails[0][1]}"
     else:
-        lf = "all systems OK"
-    return json.dumps({"sb": 1, "g": g, "lf": lf[:54]}, separators=(",", ":"))
+        # Append the time of the last poller check so an all-green board is
+        # visibly fresh (a stale feed would otherwise look identical).
+        gen, chk = st.get("generated", ""), None
+        for pat in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                chk = fmt_clock(time.strptime(gen, pat))
+                break
+            except ValueError:
+                pass
+        lf = f"all systems OK @ {chk or fmt_clock()}"
+    return json.dumps({"sb": 1, "g": g, "lf": lf[:54],
+                       "clk": clk_string()}, separators=(",", ":"), ensure_ascii=False)
 
 
 def configure_port(path):

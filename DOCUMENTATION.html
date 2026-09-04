@@ -384,11 +384,16 @@ pitch-shifted.</p>
 </ul>
 <h3 id="82-the-serial-protocol-and-why-its-flat">8.2 The serial protocol (and why it's flat)</h3>
 <p>The status line is a <strong>flat</strong> object — the item list is a delimited string, NOT a JSON array:</p>
-<pre><code>{"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...","lf":"! last fail: DB-prod  2026-06-15 10:15"}
+<pre><code>{"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...","lf":"! last fail: DB-prod  2026-06-15 10:15","clk":"8:23am · 04"}
    sb : marker (1) so the firmware routes it to the status handler
    g  : "short=state;..."   state 1=ok 0=down 2=unknown
-   lf : pre-formatted bottom "last fail" line
+   lf : pre-formatted bottom "last fail" line; when all green it carries the
+        last poller check time ("all systems OK @ 8:23am")
+   clk: host-formatted corner clock, "time · day-of-month" (device has no RTC;
+        also sent on usage payloads — either one refreshes both screens'
+        bottom-right corner). Raw UTF-8 (ensure_ascii=False), 12h no leading 0.
 </code></pre>
+<p>On-device the status screen also shows a top-right <strong>"N up · M down"</strong> summary counted from <code>g</code> — green when everything is up, red (with the title) the moment anything is down.</p>
 <p>The firmware splits <code>g</code> with <code>strtok</code> (plain C) and drives a <strong>pre-created grid of dot+label widgets</strong> — it never allocates or parses a JSON array at runtime. This is deliberate: an on-device <strong>JSON array parse hung the firmware</strong>; doing the formatting in the daemon and sending flat scalars (the same shape as the usage payload) is what made it reliable.</p>
 <h3 id="83-configuring-the-target-list">8.3 Configuring the target list (<code>targets.json</code>)</h3>
 <p>The list lives in <code>~/statusboard/targets.json</code> on dt42 (a sanitized copy is committed as <code>dt42/targets.example.json</code>). It is <strong>re-read every poll cycle</strong> — edit it and the change shows up on the device, the web dashboard and the FAM page within ~45 s, no restart.</p>
