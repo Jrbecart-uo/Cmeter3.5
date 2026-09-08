@@ -492,9 +492,16 @@ control surface carries no info) with:
 
 - **`< Prev` / `Next >`** — focus the previous/next herdr pane (cycles the
   pane ring relative to the currently focused one); **`+ Tab`** — new focused
-  tab; **`+ CLI`** — new focused tab running
-  `claude --dangerously-skip-permissions`, started in the focused pane's
-  project dir. All immediate, single tap.
+  tab. Immediate, single tap.
+- **`+ CLI`** — spawn a new focused `claude --dangerously-skip-permissions`
+  session, with a **project picker**: the first tap turns the four big
+  buttons into a chooser for ~5 s — three project dirs (pinned `"projects"`
+  from `shortcuts.json` first, then the most recently active
+  `~/.claude/projects`, existence-verified via a filesystem-guided slug
+  decode) plus **`New tmp/`**, which mkdirs an auto-named scratch dir
+  (`tmp-MMDD-HHMM` under `CLAWD_TMP_BASE`, default `~/tmp`) and spawns there.
+  Tapping `+ CLI` a second time means "here" (the focused pane's dir);
+  timeout reverts to the shortcuts with nothing spawned.
 - **Four shortcut buttons** that type a canned prompt into the **focused**
   pane and submit it (`herdr pane run`). These are **arm/confirm**: first tap
   arms (blue "Tap again: …" banner + accent border), second tap within 4 s

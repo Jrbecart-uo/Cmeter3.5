@@ -181,16 +181,87 @@ def load_shortcuts():
             return []
 
 
+# ---- "+ CLI" project picker ------------------------------------------------
+# Tap "+ CLI" on the device -> the four big buttons become a project chooser:
+# three project dirs (pinned "projects" from shortcuts.json first, then the
+# most recently active ~/.claude/projects, existence-verified) + "New tmp/"
+# (auto-named subfolder under CLAWD_TMP_BASE). The daemon remembers which dir
+# each slot meant in _picker_dirs; the device answers {"act":"cli<i>"}.
+CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
+TMP_BASE = Path(os.environ.get("CLAWD_TMP_BASE", Path.home() / "tmp"))
+_picker_dirs = []
+
+
+def _decode_project_slug(slug):
+    """'-home-jbecart-tmp-Clawdmeter' -> '/home/jbecart/tmp/Clawdmeter'.
+    Dashes are ambiguous (dir separators vs literal dashes in names), so walk
+    the real filesystem and let existing directories pick the split."""
+    parts = slug.lstrip("-").split("-")
+
+    def walk(base, i):
+        if i == len(parts):
+            return base
+        seg = ""
+        for j in range(i, len(parts)):
+            seg = parts[i] if j == i else f"{seg}-{parts[j]}"
+            cand = os.path.join(base, seg)
+            if os.path.isdir(cand):
+                r = walk(cand, j + 1)
+                if r:
+                    return r
+        return None
+
+    return walk("/", 0)
+
+
+def picker_dirs():
+    """Pinned projects (config) first, then recent Claude projects by mtime;
+    deduped, existing dirs only, top 3."""
+    dirs = []
+    try:
+        for p in json.loads(SHORTCUTS_PATH.read_text()).get("projects", []):
+            p = os.path.expanduser(p)
+            if os.path.isdir(p) and p not in dirs:
+                dirs.append(p)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        slugs = sorted(CLAUDE_PROJECTS.iterdir(),
+                       key=lambda d: d.stat().st_mtime, reverse=True)
+        for d in slugs:
+            if len(dirs) >= 3:
+                break
+            path = _decode_project_slug(d.name)
+            if path and path not in dirs:
+                dirs.append(path)
+    except OSError:
+        pass
+    return dirs[:3]
+
+
 def remote_payload():
     """Button labels for the device's Remote screen (re-read each cycle so
-    edits to shortcuts.json show up without a restart)."""
+    edits to shortcuts.json show up without a restart). p0..p2 are the
+    "+ CLI" picker choices."""
+    global _picker_dirs
     sc = load_shortcuts()
     if not sc:
         return None
     obj = {"rm": 1}
     for i, s in enumerate(sc):
         obj[f"b{i}"] = str(s.get("label", ""))[:14]
+    _picker_dirs = picker_dirs()
+    for i, d in enumerate(_picker_dirs):
+        obj[f"p{i}"] = os.path.basename(d)[:14]
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
+
+def _spawn_claude(cwd):
+    rc, out = _run([HERDR, "agent", "start", "claude", "--cwd", str(cwd),
+                    "--focus", "--",
+                    "claude", "--dangerously-skip-permissions"], timeout=15)
+    log(f"remote: new claude CLI in {cwd}"
+        + ("" if rc == 0 else f" FAILED {out[:80]}"))
 
 
 def _focused_agent():
@@ -218,16 +289,24 @@ def handle_act(act):
     elif act == "tab":
         rc, out = _run([HERDR, "tab", "create", "--focus"], timeout=10)
         log("remote: new tab" + ("" if rc == 0 else f" FAILED {out[:80]}"))
-    elif act == "cli":
-        # New focused claude session (bypass-permissions — the user's usual
-        # agent-spawning mode), started in the focused pane's project dir.
+    elif act in ("cli", "clihere"):
+        # Bypass-permissions claude in the focused pane's project dir
         focused, _ = _focused_agent()
-        cwd = (focused or {}).get("cwd") or str(Path.home())
-        rc, out = _run([HERDR, "agent", "start", "claude", "--cwd", cwd,
-                        "--focus", "--",
-                        "claude", "--dangerously-skip-permissions"], timeout=15)
-        log(f"remote: new claude CLI in {cwd}"
-            + ("" if rc == 0 else f" FAILED {out[:80]}"))
+        _spawn_claude((focused or {}).get("cwd") or str(Path.home()))
+    elif act in ("cli0", "cli1", "cli2"):
+        i = int(act[3])
+        if i < len(_picker_dirs):
+            _spawn_claude(_picker_dirs[i])
+        else:
+            log(f"remote: picker slot {i} empty")
+    elif act == "clitmp":
+        # Fresh auto-named scratch dir under the temp base
+        name = time.strftime("tmp-%m%d-%H%M")
+        d, n = TMP_BASE / name, 2
+        while d.exists():
+            d, n = TMP_BASE / f"{name}-{n}", n + 1
+        d.mkdir(parents=True)
+        _spawn_claude(d)
     elif act.startswith("sc"):
         try:
             i = int(act[2:])

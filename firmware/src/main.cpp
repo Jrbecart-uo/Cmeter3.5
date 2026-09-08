@@ -208,6 +208,7 @@ static bool apply_screen_json(const char* json) {
     int s = doc["scr"];
     if (s < 0 || s >= SCREEN_COUNT) return false;
     ui_show_screen((screen_t)s);
+    if (doc["pk"] | 0) ui_remote_enter_picker();   // QA: force the CLI picker
     return true;
 }
 
@@ -218,7 +219,8 @@ static bool apply_remote_json(const char* json) {
     if (deserializeJson(doc, json)) return false;
     if (!doc["rm"].is<int>()) return false;   // marker; absent on other lines
     ui_update_remote(doc["b0"] | "", doc["b1"] | "",
-                     doc["b2"] | "", doc["b3"] | "");
+                     doc["b2"] | "", doc["b3"] | "",
+                     doc["p0"] | "", doc["p1"] | "", doc["p2"] | "");
     return true;
 }
 #endif  // CLAWD_STATUS_SCREEN

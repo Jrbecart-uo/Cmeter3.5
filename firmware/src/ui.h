@@ -15,8 +15,10 @@ void ui_update(const UsageData* data);
 void ui_update_status(const StatusData* data);
 void ui_update_herd(const HerdData* data);
 void ui_update_remote(const char* b0, const char* b1,
-                      const char* b2, const char* b3);
-void ui_remote_tick(void);   // clears a stale armed shortcut highlight
+                      const char* b2, const char* b3,
+                      const char* p0, const char* p1, const char* p2);
+void ui_remote_tick(void);   // clears stale armed shortcut / picker state
+void ui_remote_enter_picker(void);   // QA hook ({"pk":1} serial debug)
 void ui_tick_anim(void);
 void ui_tick_rotate(void);
 void ui_rotate_next(void);

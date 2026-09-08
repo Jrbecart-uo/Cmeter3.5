@@ -92,6 +92,15 @@ static lv_obj_t* lbl_remote_clock;
 static int      rm_armed = -1;       // shortcut awaiting its confirm tap
 static uint32_t rm_armed_ms = 0;
 static bool have_remote = false;
+
+// "+ CLI" project picker: while active, the four big buttons become project
+// choices (3 dirs from the daemon + "New tmp/"); times out back to shortcuts.
+#define RM_PICKER_MS 5000
+static lv_obj_t* rm_cli_btn = NULL;
+static bool     rm_picker = false;
+static uint32_t rm_picker_ms = 0;
+static char     rm_sc_text[RM_SHORTCUTS][16];  // shortcut labels (restore)
+static char     rm_pk_text[3][16];             // picker project labels
 static lv_obj_t* lbl_herd_sum;      // top-right "N working · M blocked"
 static lv_obj_t* lbl_herd_focus;    // bottom-left "focus: <label>"
 static lv_obj_t* lbl_herd_clock;
@@ -509,14 +518,60 @@ static void rm_set_armed(int idx) {
     }
 }
 
+static void rm_exit_picker(void) {
+    if (!rm_picker) return;
+    rm_picker = false;
+    if (rm_cli_btn) lv_obj_set_style_border_width(rm_cli_btn, 0, 0);
+    for (int i = 0; i < RM_SHORTCUTS; i++)
+        lv_label_set_text(rm_sc_lbl[i], rm_sc_text[i][0] ? rm_sc_text[i] : "-");
+}
+
+static void rm_enter_picker(void) {
+    rm_set_armed(-1);
+    rm_picker = true;
+    rm_picker_ms = lv_tick_get();
+    if (rm_cli_btn) {
+        lv_obj_set_style_border_color(rm_cli_btn, COL_ACCENT, 0);
+        lv_obj_set_style_border_width(rm_cli_btn, 3, 0);
+    }
+    for (int i = 0; i < 3; i++)
+        lv_label_set_text(rm_sc_lbl[i], rm_pk_text[i][0] ? rm_pk_text[i] : "-");
+    lv_label_set_text(rm_sc_lbl[3], "New tmp/");
+    ui_flash_event("CLI where? (+ CLI again = here)", 0x4a6b8a);
+}
+
+void ui_remote_enter_picker(void) {   // also reachable via {"pk":1} for QA
+    rm_enter_picker();
+}
+
 static void rm_nav_click_cb(lv_event_t* e) {
     const char* act = (const char*)lv_event_get_user_data(e);
+    if (strcmp(act, "cli") == 0) {
+        // First tap opens the project picker; second tap = "spawn here"
+        if (!rm_picker) {
+            rm_enter_picker();
+        } else {
+            rm_exit_picker();
+            Serial.printf("{\"act\":\"clihere\"}\n");
+            ui_flash_event("CLI: here", 0x788c5d);
+        }
+        return;
+    }
     Serial.printf("{\"act\":\"%s\"}\n", act);
 }
 
 static void rm_sc_click_cb(lv_event_t* e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     static char msg[40];
+    if (rm_picker) {
+        // Picker mode: big buttons are project choices, single tap spawns
+        if (idx < 3 && !rm_pk_text[idx][0]) { rm_exit_picker(); return; }
+        snprintf(msg, sizeof(msg), "CLI: %s", lv_label_get_text(rm_sc_lbl[idx]));
+        rm_exit_picker();
+        Serial.printf(idx < 3 ? "{\"act\":\"cli%d\"}\n" : "{\"act\":\"clitmp\"}\n", idx);
+        ui_flash_event(msg, 0x788c5d);
+        return;
+    }
     if (rm_armed == idx && lv_tick_get() - rm_armed_ms < RM_ARM_MS) {
         Serial.printf("{\"act\":\"sc%d\"}\n", idx);
         rm_set_armed(-1);
@@ -573,10 +628,12 @@ static void init_remote_screen(lv_obj_t* scr) {
     const int NAV_W = (CONTENT_W - 3 * 12) / 4, NAV_H = 48, NAV_Y = 52;
     static const char* const nav_acts[] = {"prev", "next", "tab", "cli"};
     static const char* const nav_lbls[] = {"< Prev", "Next >", "+ Tab", "+ CLI"};
-    for (int i = 0; i < 4; i++)
-        make_remote_btn(remote_container, MARGIN + i * (NAV_W + 12), NAV_Y,
-                        NAV_W, NAV_H, nav_lbls[i], NULL,
-                        rm_nav_click_cb, (void*)nav_acts[i]);
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t* b = make_remote_btn(remote_container, MARGIN + i * (NAV_W + 12),
+                                      NAV_Y, NAV_W, NAV_H, nav_lbls[i], NULL,
+                                      rm_nav_click_cb, (void*)nav_acts[i]);
+        if (i == 3) rm_cli_btn = b;   // picker highlights this while active
+    }
 
     // Shortcut grid 2x2: arm/confirm actions (labels filled by the daemon)
     const int SC_W = (CONTENT_W - 14) / 2, SC_H = 64;
@@ -747,16 +804,25 @@ void ui_update_herd(const HerdData* data) {
 }
 
 void ui_update_remote(const char* b0, const char* b1,
-                      const char* b2, const char* b3) {
+                      const char* b2, const char* b3,
+                      const char* p0, const char* p1, const char* p2) {
     const char* b[RM_SHORTCUTS] = {b0, b1, b2, b3};
+    const char* p[3] = {p0, p1, p2};
     for (int i = 0; i < RM_SHORTCUTS; i++)
-        lv_label_set_text(rm_sc_lbl[i], (b[i] && b[i][0]) ? b[i] : "-");
+        strlcpy(rm_sc_text[i], b[i] ? b[i] : "", sizeof(rm_sc_text[i]));
+    for (int i = 0; i < 3; i++)
+        strlcpy(rm_pk_text[i], p[i] ? p[i] : "", sizeof(rm_pk_text[i]));
+    if (!rm_picker)   // don't overwrite the project choices mid-pick
+        for (int i = 0; i < RM_SHORTCUTS; i++)
+            lv_label_set_text(rm_sc_lbl[i], rm_sc_text[i][0] ? rm_sc_text[i] : "-");
     have_remote = true;
 }
 
 void ui_remote_tick(void) {
     if (rm_armed >= 0 && lv_tick_get() - rm_armed_ms >= RM_ARM_MS)
         rm_set_armed(-1);
+    if (rm_picker && lv_tick_get() - rm_picker_ms >= RM_PICKER_MS)
+        rm_exit_picker();
 }
 
 void ui_tick_anim(void) {
@@ -803,6 +869,7 @@ void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(remote_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
     rm_set_armed(-1);   // leaving/entering a screen disarms any pending send
+    rm_exit_picker();
 
     switch (screen) {
     case SCREEN_SPLASH:     splash_show(); break;
