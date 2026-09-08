@@ -1,0 +1,13 @@
+{
+  "_comment": "Copied to ~/.config/clawd/shortcuts.json on first daemon start. Edit that file; labels show on the device's Remote screen buttons (keep them short), text is typed+submitted into the focused herdr pane on a confirmed tap.",
+  "shortcuts": [
+    { "label": "Wrap up",
+      "text": "Save everything important from this session (memory, notes, pending items), update docs if needed, then commit and push. Finally, tell me exactly what I should say to you in a fresh session to continue where we left off." },
+    { "label": "Commit+push",
+      "text": "Commit and push the current work with a descriptive message." },
+    { "label": "Progress?",
+      "text": "Report any progress." },
+    { "label": "Continue",
+      "text": "Continue from where you left off." }
+  ]
+}

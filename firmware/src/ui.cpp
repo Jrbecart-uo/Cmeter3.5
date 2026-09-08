@@ -80,6 +80,18 @@ static lv_obj_t* lbl_herd_title;
 static lv_obj_t* hd_dot[HD_CELLS];
 static lv_obj_t* hd_cell_lbl[HD_CELLS];
 static lv_obj_t* hd_hit[HD_CELLS];  // transparent tap zones (tap-to-focus)
+
+// ---- Remote screen widgets (nav + shortcut buttons) ----
+#define RM_SHORTCUTS 4
+#define RM_ARM_MS 4000
+static lv_obj_t* remote_container;
+static lv_obj_t* rm_sc_btn[RM_SHORTCUTS];
+static lv_obj_t* rm_sc_lbl[RM_SHORTCUTS];
+static lv_obj_t* lbl_remote_focus;
+static lv_obj_t* lbl_remote_clock;
+static int      rm_armed = -1;       // shortcut awaiting its confirm tap
+static uint32_t rm_armed_ms = 0;
+static bool have_remote = false;
 static lv_obj_t* lbl_herd_sum;      // top-right "N working · M blocked"
 static lv_obj_t* lbl_herd_focus;    // bottom-left "focus: <label>"
 static lv_obj_t* lbl_herd_clock;
@@ -162,6 +174,7 @@ static void set_clock_labels(const char* clk) {
     lv_label_set_text(lbl_usage_clock, clk);
     lv_label_set_text(lbl_status_clock, clk);
     lv_label_set_text(lbl_herd_clock, clk);
+    lv_label_set_text(lbl_remote_clock, clk);
 }
 
 static lv_color_t pct_color(float pct) {
@@ -184,6 +197,7 @@ static void format_reset_time(int mins, char* buf, size_t len) {
 
 // Forward decls — callbacks defined near ui_show_screen below
 static void global_click_cb(lv_event_t* e);
+static void rotate_step(bool include_remote);
 
 static lv_obj_t* make_panel(lv_obj_t* parent, int x, int y, int w, int h) {
     lv_obj_t* panel = lv_obj_create(parent);
@@ -476,6 +490,118 @@ static void init_herd_screen(lv_obj_t* scr) {
     lv_obj_align(lbl_herd_sum, LV_ALIGN_TOP_RIGHT, -MARGIN, 16);
 }
 
+// ======== Remote Screen (480x320 landscape) ========
+// Navigation (prev/next terminal, new tab) fires immediately; the four
+// shortcut buttons ARM on the first tap (blue banner "Tap again") and only
+// SEND {"act":"sc<i>"} on a second tap within RM_ARM_MS — a stray finger
+// must not type "commit and push" into an agent. Button labels come from the
+// daemon ({"rm":1,"b0":...}, sourced from ~/.config/clawd/shortcuts.json) so
+// the device always shows what would actually be sent.
+
+static void rm_set_armed(int idx) {
+    if (rm_armed >= 0)
+        lv_obj_set_style_border_width(rm_sc_btn[rm_armed], 0, 0);
+    rm_armed = idx;
+    rm_armed_ms = lv_tick_get();
+    if (idx >= 0) {
+        lv_obj_set_style_border_color(rm_sc_btn[idx], COL_ACCENT, 0);
+        lv_obj_set_style_border_width(rm_sc_btn[idx], 3, 0);
+    }
+}
+
+static void rm_nav_click_cb(lv_event_t* e) {
+    const char* act = (const char*)lv_event_get_user_data(e);
+    Serial.printf("{\"act\":\"%s\"}\n", act);
+}
+
+static void rm_sc_click_cb(lv_event_t* e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    static char msg[40];
+    if (rm_armed == idx && lv_tick_get() - rm_armed_ms < RM_ARM_MS) {
+        Serial.printf("{\"act\":\"sc%d\"}\n", idx);
+        rm_set_armed(-1);
+        snprintf(msg, sizeof(msg), "Sent: %s", lv_label_get_text(rm_sc_lbl[idx]));
+        ui_flash_event(msg, 0x788c5d);
+    } else {
+        rm_set_armed(idx);
+        snprintf(msg, sizeof(msg), "Tap again: %s", lv_label_get_text(rm_sc_lbl[idx]));
+        ui_flash_event(msg, 0x4a6b8a);
+    }
+}
+
+static lv_obj_t* make_remote_btn(lv_obj_t* parent, int x, int y, int w, int h,
+                                 const char* text, lv_obj_t** out_lbl,
+                                 lv_event_cb_t cb, void* user_data) {
+    lv_obj_t* btn = lv_obj_create(parent);
+    lv_obj_set_pos(btn, x, y);
+    lv_obj_set_size(btn, w, h);
+    lv_obj_set_style_bg_color(btn, COL_PANEL, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn, 8, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);   // no bubble: taps stay here
+    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
+
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_font(lbl, &font_styrene_20, 0);
+    lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
+    lv_obj_center(lbl);
+    if (out_lbl) *out_lbl = lbl;
+    return btn;
+}
+
+static void init_remote_screen(lv_obj_t* scr) {
+    remote_container = lv_obj_create(scr);
+    lv_obj_set_size(remote_container, SCR_W, SCR_H);
+    lv_obj_set_pos(remote_container, 0, 0);
+    lv_obj_set_style_bg_opa(remote_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(remote_container, 0, 0);
+    lv_obj_set_style_pad_all(remote_container, 0, 0);
+    lv_obj_clear_flag(remote_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(remote_container, global_click_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t* title = lv_label_create(remote_container);
+    lv_label_set_text(title, "Remote");
+    lv_obj_set_style_text_font(title, &font_styrene_28, 0);
+    lv_obj_set_style_text_color(title, COL_TEXT, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, MARGIN, 8);
+
+    // Nav row: immediate actions
+    const int NAV_W = (CONTENT_W - 2 * 12) / 3, NAV_H = 48, NAV_Y = 52;
+    make_remote_btn(remote_container, MARGIN, NAV_Y, NAV_W, NAV_H,
+                    "< Prev", NULL, rm_nav_click_cb, (void*)"prev");
+    make_remote_btn(remote_container, MARGIN + NAV_W + 12, NAV_Y, NAV_W, NAV_H,
+                    "Next >", NULL, rm_nav_click_cb, (void*)"next");
+    make_remote_btn(remote_container, MARGIN + 2 * (NAV_W + 12), NAV_Y, NAV_W, NAV_H,
+                    "+ Tab", NULL, rm_nav_click_cb, (void*)"tab");
+
+    // Shortcut grid 2x2: arm/confirm actions (labels filled by the daemon)
+    const int SC_W = (CONTENT_W - 14) / 2, SC_H = 64;
+    for (int i = 0; i < RM_SHORTCUTS; i++) {
+        int x = MARGIN + (i % 2) * (SC_W + 14);
+        int y = 116 + (i / 2) * (SC_H + 12);
+        rm_sc_btn[i] = make_remote_btn(remote_container, x, y, SC_W, SC_H,
+                                       "...", &rm_sc_lbl[i],
+                                       rm_sc_click_cb, (void*)(intptr_t)i);
+    }
+
+    lbl_remote_focus = lv_label_create(remote_container);
+    lv_obj_set_pos(lbl_remote_focus, MARGIN, 292);
+    lv_obj_set_width(lbl_remote_focus, 330);
+    lv_label_set_long_mode(lbl_remote_focus, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(lbl_remote_focus, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_remote_focus, COL_DIM, 0);
+    lv_label_set_text(lbl_remote_focus, "");
+
+    lbl_remote_clock = lv_label_create(remote_container);
+    lv_label_set_text(lbl_remote_clock, "");
+    lv_obj_set_style_text_font(lbl_remote_clock, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_remote_clock, COL_DIM, 0);
+    lv_obj_align(lbl_remote_clock, LV_ALIGN_BOTTOM_RIGHT, -MARGIN, -8);
+}
+
 // ======== Bluetooth Screen (480x320 landscape) ========
 
 // ======== Public API ========
@@ -493,6 +619,7 @@ void ui_init(void) {
     init_usage_screen(scr);
     init_status_screen(scr);
     init_herd_screen(scr);
+    init_remote_screen(scr);
     splash_init(scr);
 
     // Splash is touch-toggled — tap anywhere on the splash dismisses it
@@ -612,7 +739,23 @@ void ui_update_herd(const HerdData* data) {
     lv_obj_set_style_text_color(lbl_herd_title,
         blocked > 0 ? COL_RED : COL_TEXT, 0);
     lv_label_set_text(lbl_herd_focus, data->focus[0] ? data->focus : "");
+    // The Remote screen shows the same focus line: it says which pane the
+    // nav / shortcut buttons will act on.
+    lv_label_set_text(lbl_remote_focus, data->focus[0] ? data->focus : "");
     set_clock_labels(data->clk);
+}
+
+void ui_update_remote(const char* b0, const char* b1,
+                      const char* b2, const char* b3) {
+    const char* b[RM_SHORTCUTS] = {b0, b1, b2, b3};
+    for (int i = 0; i < RM_SHORTCUTS; i++)
+        lv_label_set_text(rm_sc_lbl[i], (b[i] && b[i][0]) ? b[i] : "-");
+    have_remote = true;
+}
+
+void ui_remote_tick(void) {
+    if (rm_armed >= 0 && lv_tick_get() - rm_armed_ms >= RM_ARM_MS)
+        rm_set_armed(-1);
 }
 
 void ui_tick_anim(void) {
@@ -646,7 +789,7 @@ static screen_t prev_non_splash_screen = SCREEN_USAGE;
 static void global_click_cb(lv_event_t* e) {
     (void)e;
 #if CLAWD_STATUS_SCREEN
-    ui_rotate_next();
+    rotate_step(true);   // manual taps cycle through the Remote screen too
 #else
     ui_toggle_splash();
 #endif
@@ -656,13 +799,16 @@ void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(status_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(herd_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(remote_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
+    rm_set_armed(-1);   // leaving/entering a screen disarms any pending send
 
     switch (screen) {
     case SCREEN_SPLASH:     splash_show(); break;
     case SCREEN_USAGE:      lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
     case SCREEN_STATUS:     lv_obj_clear_flag(status_container, LV_OBJ_FLAG_HIDDEN); break;
     case SCREEN_HERD:       lv_obj_clear_flag(herd_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_REMOTE:     lv_obj_clear_flag(remote_container, LV_OBJ_FLAG_HIDDEN); break;
     default: break;
     }
 
@@ -688,23 +834,31 @@ void ui_toggle_splash(void) {
     else                                  ui_show_screen(SCREEN_SPLASH);
 }
 
-// Advance to the next info screen (Usage -> Status -> Herd -> ...), skipping
-// screens whose data never arrived (e.g. herdr not running). Resets the timer
-// so a manual tap gives a full interval before auto-rotation moves on.
-void ui_rotate_next(void) {
-    static const screen_t order[] = {SCREEN_USAGE, SCREEN_STATUS, SCREEN_HERD};
-    const bool have[] = {have_usage, have_status, have_herd};
+// Advance to the next screen, skipping screens whose data never arrived
+// (e.g. herdr not running). The Remote control screen is reachable only by
+// MANUAL taps — auto-rotation skips it (a control surface carries no info,
+// and rotating onto it wastes a 30s slot; rotating off it after a dwell is
+// fine and is how you leave it without tapping through).
+static void rotate_step(bool include_remote) {
+    static const screen_t order[] = {SCREEN_USAGE, SCREEN_STATUS,
+                                     SCREEN_HERD, SCREEN_REMOTE};
+    const bool have[] = {have_usage, have_status, have_herd,
+                         include_remote && have_remote};
     int cur = 0;
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 4; i++)
         if (order[i] == current_screen) cur = i;
-    for (int k = 1; k <= 3; k++) {
-        int n = (cur + k) % 3;
-        if (have[n] || k == 3) {   // k==3: nothing has data yet — just advance
+    for (int k = 1; k <= 4; k++) {
+        int n = (cur + k) % 4;
+        if (have[n] || k == 4) {   // k==4: nothing has data yet — just advance
             ui_show_screen(order[n]);
             break;
         }
     }
     last_rotate_ms = lv_tick_get();
+}
+
+void ui_rotate_next(void) {   // auto-rotation path
+    rotate_step(false);
 }
 
 // Called every loop; auto-rotates once at least two datasets have arrived.

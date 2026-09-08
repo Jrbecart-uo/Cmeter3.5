@@ -197,6 +197,30 @@ static bool apply_herd_json(const char* json) {
         ui_show_screen(SCREEN_HERD);
     return true;
 }
+
+// Debug/QA: {"scr":N} switches to screen N (screen_t values) — lets the host
+// screenshot any screen (the Remote screen is otherwise reachable only by a
+// physical tap).
+static bool apply_screen_json(const char* json) {
+    JsonDocument doc;
+    if (deserializeJson(doc, json)) return false;
+    if (!doc["scr"].is<int>()) return false;
+    int s = doc["scr"];
+    if (s < 0 || s >= SCREEN_COUNT) return false;
+    ui_show_screen((screen_t)s);
+    return true;
+}
+
+// Apply a Remote-screen labels payload ({"rm":1,"b0":"Wrap up",...}) — the
+// daemon pushes the shortcut button labels from ~/.config/clawd/shortcuts.json.
+static bool apply_remote_json(const char* json) {
+    JsonDocument doc;
+    if (deserializeJson(doc, json)) return false;
+    if (!doc["rm"].is<int>()) return false;   // marker; absent on other lines
+    ui_update_remote(doc["b0"] | "", doc["b1"] | "",
+                     doc["b2"] | "", doc["b3"] | "");
+    return true;
+}
 #endif  // CLAWD_STATUS_SCREEN
 
 // Handle a Claude-session event line: {"ev":"task-complete"} etc.
@@ -274,6 +298,10 @@ static void check_serial_cmd() {
                     Serial.println("STATUS_OK");
                 } else if (apply_herd_json(cmd_buf)) {
                     Serial.println("HERD_OK");
+                } else if (apply_remote_json(cmd_buf)) {
+                    Serial.println("REMOTE_OK");
+                } else if (apply_screen_json(cmd_buf)) {
+                    Serial.println("SCR_OK");
 #endif
                 } else {
                     Serial.println(apply_usage_json(cmd_buf) ? "USAGE_OK" : "USAGE_ERR");
@@ -370,6 +398,7 @@ void loop() {
     ui_tick_anim();
 #if CLAWD_STATUS_SCREEN
     ui_tick_rotate();
+    ui_remote_tick();
 #endif
     ui_event_tick();
     imu_tick();

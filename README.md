@@ -59,6 +59,9 @@ in real time with a coloured banner and a Warcraft-peasant voice line
 - **Herd screen** *(optional)* — a third screen showing your
   **herdr** agents live (idle/working/**blocked**), pushed over
   herdr's event socket; the device jumps to it when an agent needs you.
+- **Remote screen** *(optional)* — prev/next terminal, new tab, and four
+  configurable shortcut buttons (arm/confirm) that type a canned prompt into
+  the focused pane — e.g. "Wrap up", "Commit+push" (`~/.config/clawd/shortcuts.json`).
 - The device auto-rotates through the enabled screens every 30 s (tap to
   advance); screens without data drop out of the rotation.
 

@@ -485,6 +485,29 @@ removes it. Anything else the firmware prints (`USAGE_OK`, boot logs) is
 ignored by the reader. Focus is deliberately the **only** device-initiated
 action — no blind "approve" buttons.
 
+### 9.3 Remote screen (nav + shortcut prompts)
+
+A fourth screen (reachable by **tap only** — auto-rotation skips it, since a
+control surface carries no info) with:
+
+- **`< Prev` / `Next >`** — focus the previous/next herdr pane (cycles the
+  pane ring relative to the currently focused one); **`+ Tab`** — new focused
+  tab. All immediate, single tap.
+- **Four shortcut buttons** that type a canned prompt into the **focused**
+  pane and submit it (`herdr pane run`). These are **arm/confirm**: first tap
+  arms (blue "Tap again: …" banner + accent border), second tap within 4 s
+  sends (green "Sent: …" banner). Leaving the screen disarms.
+- Prompts live in **`~/.config/clawd/shortcuts.json`** (seeded from
+  `daemon/shortcuts.example.json` on first run; re-read every cycle, so edits
+  apply without a restart). The daemon pushes the labels to the device
+  (`{"rm":1,"b0":...}`) so the buttons always show what would be sent. The
+  defaults were mined from real session history: **Wrap up** (save + notes +
+  commit/push + handoff summary), **Commit+push**, **Progress?**, **Continue**.
+- The bottom-left `focus:` line shows which pane the buttons act on.
+- Debug: the serial line `{"scr":N}` switches to screen N (screen_t order:
+  splash, usage, status, herd, remote) — how the host screenshots the
+  tap-only Remote screen.
+
 ---
 
 ## 10. Credits

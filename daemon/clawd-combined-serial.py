@@ -157,6 +157,84 @@ HERD_DEBOUNCE = float(os.environ.get("HERD_DEBOUNCE", "2"))
 PAUSE_PATH = "/tmp/clawd-serial-reader.pause"
 _herd_panes = []   # pane_id per grid cell index, order of the last "g" string
 
+# Remote screen shortcuts: labels are pushed to the device buttons every poll
+# ({"rm":1,"b0":...}), the text is typed+submitted into the FOCUSED pane when a
+# button tap is confirmed on-device ({"act":"sc<i>"}). Config is a user file so
+# prompts can be edited without touching code; seeded from the repo example.
+SHORTCUTS_PATH = Path(os.environ.get(
+    "SHORTCUTS_FILE", Path.home() / ".config" / "clawd" / "shortcuts.json"))
+SHORTCUTS_EXAMPLE = Path(__file__).parent / "shortcuts.example.json"
+
+
+def load_shortcuts():
+    try:
+        return json.loads(SHORTCUTS_PATH.read_text())["shortcuts"][:4]
+    except Exception:  # noqa: BLE001 — missing/broken config -> seed defaults
+        try:
+            data = json.loads(SHORTCUTS_EXAMPLE.read_text())
+            SHORTCUTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            SHORTCUTS_PATH.write_text(json.dumps(data, indent=2))
+            log(f"shortcuts: seeded {SHORTCUTS_PATH}")
+            return data["shortcuts"][:4]
+        except Exception as e:  # noqa: BLE001
+            log(f"shortcuts: unavailable ({e!r})")
+            return []
+
+
+def remote_payload():
+    """Button labels for the device's Remote screen (re-read each cycle so
+    edits to shortcuts.json show up without a restart)."""
+    sc = load_shortcuts()
+    if not sc:
+        return None
+    obj = {"rm": 1}
+    for i, s in enumerate(sc):
+        obj[f"b{i}"] = str(s.get("label", ""))[:14]
+    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
+
+def _focused_agent():
+    rc, out = _run([HERDR, "agent", "list"], timeout=10)
+    if rc != 0:
+        return None, []
+    agents = json.loads(out).get("result", {}).get("agents", [])
+    focused = next((a for a in agents if a.get("focused")), None)
+    return focused, agents
+
+
+def handle_act(act):
+    """Named remote-control actions from the device."""
+    if not HERDR:
+        return
+    if act in ("prev", "next"):
+        focused, agents = _focused_agent()
+        panes = [a.get("pane_id") for a in agents if a.get("pane_id")]
+        if not panes:
+            return
+        cur = panes.index(focused["pane_id"]) if focused and focused.get("pane_id") in panes else 0
+        target = panes[(cur + (1 if act == "next" else -1)) % len(panes)]
+        rc, out = _run([HERDR, "agent", "focus", target], timeout=10)
+        log(f"remote: {act} -> focus {target}" + ("" if rc == 0 else f" FAILED {out[:80]}"))
+    elif act == "tab":
+        rc, out = _run([HERDR, "tab", "create", "--focus"], timeout=10)
+        log("remote: new tab" + ("" if rc == 0 else f" FAILED {out[:80]}"))
+    elif act.startswith("sc"):
+        try:
+            i = int(act[2:])
+        except ValueError:
+            return
+        sc = load_shortcuts()
+        if not (0 <= i < len(sc)):
+            return
+        focused, _ = _focused_agent()
+        if not focused:
+            log(f"remote: shortcut '{sc[i].get('label')}' — no focused agent")
+            return
+        pane = focused["pane_id"]
+        rc, out = _run([HERDR, "pane", "run", pane, sc[i]["text"]], timeout=15)
+        log(f"remote: sent '{sc[i].get('label')}' -> {pane}"
+            + ("" if rc == 0 else f" FAILED {out[:80]}"))
+
 
 def herd_payload(show=False):
     if not HERDR:
@@ -283,6 +361,12 @@ def handle_device_line(line):
     try:
         m = json.loads(line)
     except ValueError:
+        return
+    if "act" in m:
+        try:
+            handle_act(str(m["act"]))
+        except Exception as e:  # noqa: BLE001
+            log(f"remote: act {m.get('act')!r} failed: {e!r}")
         return
     if "btn" not in m:
         return
@@ -474,7 +558,7 @@ def main():
         threading.Thread(target=serial_reader, daemon=True).start()
     while True:
         for label, fn in (("usage", usage_payload), ("status", status_payload),
-                          ("herd", herd_payload)):
+                          ("herd", herd_payload), ("remote", remote_payload)):
             try:
                 # Payload build first: network errors land in the generic
                 # handler below and must NOT trigger a usbipd reattach.
