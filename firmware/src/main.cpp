@@ -218,9 +218,11 @@ static bool apply_remote_json(const char* json) {
     JsonDocument doc;
     if (deserializeJson(doc, json)) return false;
     if (!doc["rm"].is<int>()) return false;   // marker; absent on other lines
-    ui_update_remote(doc["b0"] | "", doc["b1"] | "",
-                     doc["b2"] | "", doc["b3"] | "",
-                     doc["p0"] | "", doc["p1"] | "", doc["p2"] | "");
+    const char* b[4] = {doc["b0"] | "", doc["b1"] | "",
+                        doc["b2"] | "", doc["b3"] | ""};
+    const char* p[5] = {doc["p0"] | "", doc["p1"] | "", doc["p2"] | "",
+                        doc["p3"] | "", doc["p4"] | ""};
+    ui_update_remote(b, p);
     return true;
 }
 #endif  // CLAWD_STATUS_SCREEN

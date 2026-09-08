@@ -93,14 +93,18 @@ static int      rm_armed = -1;       // shortcut awaiting its confirm tap
 static uint32_t rm_armed_ms = 0;
 static bool have_remote = false;
 
-// "+ CLI" project picker: while active, the four big buttons become project
-// choices (3 dirs from the daemon + "New tmp/"); times out back to shortcuts.
-#define RM_PICKER_MS 5000
+// "+ CLI" project picker: while active, a 6-button overlay (5 most-used
+// project dirs from the daemon + an accent-colored "New tmp/") replaces the
+// shortcut buttons; times out back to the shortcuts.
+#define RM_PICKER_MS 6000
+#define RM_PK_PROJECTS 5
+#define RM_PK_BTNS (RM_PK_PROJECTS + 1)   // + "New tmp/"
 static lv_obj_t* rm_cli_btn = NULL;
+static lv_obj_t* rm_pk_btn[RM_PK_BTNS];
+static lv_obj_t* rm_pk_lbl[RM_PK_BTNS];
 static bool     rm_picker = false;
 static uint32_t rm_picker_ms = 0;
-static char     rm_sc_text[RM_SHORTCUTS][16];  // shortcut labels (restore)
-static char     rm_pk_text[3][16];             // picker project labels
+static char     rm_pk_text[RM_PK_PROJECTS][16];  // picker project labels
 static lv_obj_t* lbl_herd_sum;      // top-right "N working · M blocked"
 static lv_obj_t* lbl_herd_focus;    // bottom-left "focus: <label>"
 static lv_obj_t* lbl_herd_clock;
@@ -522,8 +526,10 @@ static void rm_exit_picker(void) {
     if (!rm_picker) return;
     rm_picker = false;
     if (rm_cli_btn) lv_obj_set_style_border_width(rm_cli_btn, 0, 0);
+    for (int i = 0; i < RM_PK_BTNS; i++)
+        lv_obj_add_flag(rm_pk_btn[i], LV_OBJ_FLAG_HIDDEN);
     for (int i = 0; i < RM_SHORTCUTS; i++)
-        lv_label_set_text(rm_sc_lbl[i], rm_sc_text[i][0] ? rm_sc_text[i] : "-");
+        lv_obj_clear_flag(rm_sc_btn[i], LV_OBJ_FLAG_HIDDEN);
 }
 
 static void rm_enter_picker(void) {
@@ -534,9 +540,17 @@ static void rm_enter_picker(void) {
         lv_obj_set_style_border_color(rm_cli_btn, COL_ACCENT, 0);
         lv_obj_set_style_border_width(rm_cli_btn, 3, 0);
     }
-    for (int i = 0; i < 3; i++)
-        lv_label_set_text(rm_sc_lbl[i], rm_pk_text[i][0] ? rm_pk_text[i] : "-");
-    lv_label_set_text(rm_sc_lbl[3], "New tmp/");
+    for (int i = 0; i < RM_SHORTCUTS; i++)
+        lv_obj_add_flag(rm_sc_btn[i], LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < RM_PK_PROJECTS; i++) {
+        if (rm_pk_text[i][0]) {
+            lv_label_set_text(rm_pk_lbl[i], rm_pk_text[i]);
+            lv_obj_clear_flag(rm_pk_btn[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(rm_pk_btn[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    lv_obj_clear_flag(rm_pk_btn[RM_PK_PROJECTS], LV_OBJ_FLAG_HIDDEN);
     ui_flash_event("CLI where? (+ CLI again = here)", 0x4a6b8a);
 }
 
@@ -560,18 +574,19 @@ static void rm_nav_click_cb(lv_event_t* e) {
     Serial.printf("{\"act\":\"%s\"}\n", act);
 }
 
+static void rm_pk_click_cb(lv_event_t* e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    static char msg[40];
+    snprintf(msg, sizeof(msg), "CLI: %s", lv_label_get_text(rm_pk_lbl[idx]));
+    rm_exit_picker();
+    Serial.printf(idx < RM_PK_PROJECTS ? "{\"act\":\"cli%d\"}\n"
+                                       : "{\"act\":\"clitmp\"}\n", idx);
+    ui_flash_event(msg, 0x788c5d);
+}
+
 static void rm_sc_click_cb(lv_event_t* e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     static char msg[40];
-    if (rm_picker) {
-        // Picker mode: big buttons are project choices, single tap spawns
-        if (idx < 3 && !rm_pk_text[idx][0]) { rm_exit_picker(); return; }
-        snprintf(msg, sizeof(msg), "CLI: %s", lv_label_get_text(rm_sc_lbl[idx]));
-        rm_exit_picker();
-        Serial.printf(idx < 3 ? "{\"act\":\"cli%d\"}\n" : "{\"act\":\"clitmp\"}\n", idx);
-        ui_flash_event(msg, 0x788c5d);
-        return;
-    }
     if (rm_armed == idx && lv_tick_get() - rm_armed_ms < RM_ARM_MS) {
         Serial.printf("{\"act\":\"sc%d\"}\n", idx);
         rm_set_armed(-1);
@@ -643,6 +658,22 @@ static void init_remote_screen(lv_obj_t* scr) {
         rm_sc_btn[i] = make_remote_btn(remote_container, x, y, SC_W, SC_H,
                                        "...", &rm_sc_lbl[i],
                                        rm_sc_click_cb, (void*)(intptr_t)i);
+    }
+
+    // Picker overlay: 3 rows x 2 cols of smaller buttons, hidden until
+    // "+ CLI" opens it. Last slot is "New tmp/" in the accent color so the
+    // scratch-folder option reads differently from real projects.
+    const int PK_W = SC_W, PK_H = 42;
+    for (int i = 0; i < RM_PK_BTNS; i++) {
+        int x = MARGIN + (i % 2) * (PK_W + 14);
+        int y = 114 + (i / 2) * (PK_H + 8);
+        rm_pk_btn[i] = make_remote_btn(remote_container, x, y, PK_W, PK_H,
+                                       i == RM_PK_PROJECTS ? "New tmp/" : "-",
+                                       &rm_pk_lbl[i],
+                                       rm_pk_click_cb, (void*)(intptr_t)i);
+        if (i == RM_PK_PROJECTS)
+            lv_obj_set_style_bg_color(rm_pk_btn[i], COL_ACCENT, 0);
+        lv_obj_add_flag(rm_pk_btn[i], LV_OBJ_FLAG_HIDDEN);
     }
 
     lbl_remote_focus = lv_label_create(remote_container);
@@ -803,18 +834,12 @@ void ui_update_herd(const HerdData* data) {
     set_clock_labels(data->clk);
 }
 
-void ui_update_remote(const char* b0, const char* b1,
-                      const char* b2, const char* b3,
-                      const char* p0, const char* p1, const char* p2) {
-    const char* b[RM_SHORTCUTS] = {b0, b1, b2, b3};
-    const char* p[3] = {p0, p1, p2};
+void ui_update_remote(const char* const b[RM_SHORTCUTS],
+                      const char* const p[RM_PK_PROJECTS]) {
     for (int i = 0; i < RM_SHORTCUTS; i++)
-        strlcpy(rm_sc_text[i], b[i] ? b[i] : "", sizeof(rm_sc_text[i]));
-    for (int i = 0; i < 3; i++)
+        lv_label_set_text(rm_sc_lbl[i], (b[i] && b[i][0]) ? b[i] : "-");
+    for (int i = 0; i < RM_PK_PROJECTS; i++)
         strlcpy(rm_pk_text[i], p[i] ? p[i] : "", sizeof(rm_pk_text[i]));
-    if (!rm_picker)   // don't overwrite the project choices mid-pick
-        for (int i = 0; i < RM_SHORTCUTS; i++)
-            lv_label_set_text(rm_sc_lbl[i], rm_sc_text[i][0] ? rm_sc_text[i] : "-");
     have_remote = true;
 }
 

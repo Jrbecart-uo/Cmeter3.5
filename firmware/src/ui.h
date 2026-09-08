@@ -14,9 +14,8 @@ void ui_init(void);
 void ui_update(const UsageData* data);
 void ui_update_status(const StatusData* data);
 void ui_update_herd(const HerdData* data);
-void ui_update_remote(const char* b0, const char* b1,
-                      const char* b2, const char* b3,
-                      const char* p0, const char* p1, const char* p2);
+// b = 4 shortcut labels, p = 5 "+ CLI" picker project labels
+void ui_update_remote(const char* const b[4], const char* const p[5]);
 void ui_remote_tick(void);   // clears stale armed shortcut / picker state
 void ui_remote_enter_picker(void);   // QA hook ({"pk":1} serial debug)
 void ui_tick_anim(void);

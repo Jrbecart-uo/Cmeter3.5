@@ -214,9 +214,14 @@ def _decode_project_slug(slug):
     return walk("/", 0)
 
 
+PICKER_SLOTS = 5
+
+
 def picker_dirs():
-    """Pinned projects (config) first, then recent Claude projects by mtime;
-    deduped, existing dirs only, top 3."""
+    """Pinned projects (config) first, then the MOST USED Claude projects:
+    ranked by session count over the last 60 days (recent activity, not
+    all-time — a stale but once-busy project shouldn't crowd out current
+    work), mtime as tie-break. Deduped, existing dirs only, top 5."""
     dirs = []
     try:
         for p in json.loads(SHORTCUTS_PATH.read_text()).get("projects", []):
@@ -226,17 +231,26 @@ def picker_dirs():
     except Exception:  # noqa: BLE001
         pass
     try:
-        slugs = sorted(CLAUDE_PROJECTS.iterdir(),
-                       key=lambda d: d.stat().st_mtime, reverse=True)
-        for d in slugs:
-            if len(dirs) >= 3:
+        cutoff = time.time() - 60 * 86400
+        ranked = []
+        for d in CLAUDE_PROJECTS.iterdir():
+            if not d.is_dir():
+                continue
+            sessions = [f.stat().st_mtime for f in d.glob("*.jsonl")]
+            recent = sum(1 for t in sessions if t >= cutoff)
+            ranked.append((recent, max(sessions, default=0), d.name))
+        ranked.sort(reverse=True)
+        for recent, _, slug in ranked:
+            if len(dirs) >= PICKER_SLOTS:
                 break
-            path = _decode_project_slug(d.name)
+            if recent == 0:
+                continue
+            path = _decode_project_slug(slug)
             if path and path not in dirs:
                 dirs.append(path)
     except OSError:
         pass
-    return dirs[:3]
+    return dirs[:PICKER_SLOTS]
 
 
 def remote_payload():
@@ -293,7 +307,7 @@ def handle_act(act):
         # Bypass-permissions claude in the focused pane's project dir
         focused, _ = _focused_agent()
         _spawn_claude((focused or {}).get("cwd") or str(Path.home()))
-    elif act in ("cli0", "cli1", "cli2"):
+    elif act in ("cli0", "cli1", "cli2", "cli3", "cli4"):
         i = int(act[3])
         if i < len(_picker_dirs):
             _spawn_claude(_picker_dirs[i])
