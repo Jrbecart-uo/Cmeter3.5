@@ -6,7 +6,12 @@ OUTPUT="${1:-screenshot.png}"
 PORT="${2:-/dev/ttyACM0}"
 
 TMPRAW=$(mktemp /tmp/screenshot_XXXXXX.raw)
-trap "rm -f '$TMPRAW'" EXIT
+# The combined daemon holds a read loop on the port (tap-to-focus). Pause it
+# while we capture, or it would eat the SCREENSHOT byte stream.
+PAUSE=/tmp/clawd-serial-reader.pause
+touch "$PAUSE"
+trap "rm -f '$TMPRAW' '$PAUSE'" EXIT
+sleep 0.8   # give the reader time to close its fd
 
 echo "Taking screenshot from $PORT..."
 

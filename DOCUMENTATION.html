@@ -430,6 +430,7 @@ systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now statusbo
 <hr />
 <h2 id="9-herd-mode-herdr-agent-board">9. Herd mode (herdr agent board)</h2>
 <p>A third rotating screen showing every <strong>herdr</strong> agent (the terminal workspace manager for AI coding agents) as a dot grid — who's idle, who's working, and above all <strong>who's blocked waiting on you</strong>.</p>
+<p><img src="docs/img/herd-screen.png" alt="Herd screen" /></p>
 <h3 id="91-how-it-works">9.1 How it works</h3>
 <pre><code>  herdr server (unix socket ~/.config/herdr/herdr.sock)
      │  `herdr agent list` every 30s poll cycle          (fallback refresh)
@@ -447,6 +448,9 @@ systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now statusbo
 <li>Env knobs: <code>HERD_SHOW</code> (statuses that force the screen), <code>HERD_DEBOUNCE</code> (min s between event pushes, default 2), <code>HERDR_EXE</code>, <code>HERDR_SOCK</code>.</li>
 <li>No herdr installed / not running → the payload is skipped and the screen simply drops out of the rotation (which now cycles Usage → Web Status → Herd across whichever screens have data).</li>
 </ul>
+<h3 id="92-tap-to-focus-remote-control">9.2 Tap-to-focus (remote control)</h3>
+<p><strong>Tapping an agent cell focuses that pane on the desktop.</strong> Each cell has a transparent LVGL hit zone that sends <code>{"btn":&lt;cell-index&gt;}</code> up the serial link (no bubbling, so a tap on empty space still advances the screen). The daemon runs a <code>serial_reader</code> thread that maps the index back to the pane id at that position in the last-sent grid and runs <code>herdr agent focus &lt;pane&gt;</code>.</p>
+<p>Because the daemon now <em>reads</em> the port continuously, <code>screenshot.sh</code> coordinates via a pause file (<code>/tmp/clawd-serial-reader.pause</code>): it touches the file, waits ~1 s for the reader to release the port, captures, and removes it. Anything else the firmware prints (<code>USAGE_OK</code>, boot logs) is ignored by the reader. Focus is deliberately the <strong>only</strong> device-initiated action — no blind "approve" buttons.</p>
 <hr />
 <h2 id="10-credits">10. Credits</h2>
 <ul>

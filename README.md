@@ -73,6 +73,17 @@ rotates between them. Enable/disable with `CLAWD_STATUS_SCREEN` in
 `firmware/src/clawd_config.h`. Full details, the serial protocol, and how to edit
 the target list: **[`DOCUMENTATION.md` §8](DOCUMENTATION.md)**.
 
+## Herd screen
+
+![Herd screen](docs/img/herd-screen.png)
+
+An optional third screen shows your **herdr** agents live: grey = idle, amber =
+working, **red = blocked** (waiting on you — the device also switches to this
+screen and plays the "needs you" sound), focused pane underlined in orange.
+Updates are pushed over herdr's unix socket within ~2 s, and **tapping an
+agent focuses its pane on the desktop** (the screen is a remote control).
+Details: **[`DOCUMENTATION.md` §9](DOCUMENTATION.md)**.
+
 ## Quick start
 
 Full step-by-step (Windows/WSL2 `usbipd` + auto-attach, build, flash, daemon,

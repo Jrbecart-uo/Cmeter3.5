@@ -79,6 +79,7 @@ static lv_obj_t* herd_container;
 static lv_obj_t* lbl_herd_title;
 static lv_obj_t* hd_dot[HD_CELLS];
 static lv_obj_t* hd_cell_lbl[HD_CELLS];
+static lv_obj_t* hd_hit[HD_CELLS];  // transparent tap zones (tap-to-focus)
 static lv_obj_t* lbl_herd_sum;      // top-right "N working · M blocked"
 static lv_obj_t* lbl_herd_focus;    // bottom-left "focus: <label>"
 static lv_obj_t* lbl_herd_clock;
@@ -393,6 +394,16 @@ static void init_status_screen(lv_obj_t* scr) {
 // herdr agent grid — same crash-safe pre-created dot+label cells as the
 // status board. Dot: dim=idle, amber=working, red=blocked. "*" prefix on the
 // label marks the focused pane.
+//
+// Tap-to-focus: each cell has a transparent hit zone that sends {"btn":N}
+// up the serial link; the daemon maps N to the pane and runs
+// `herdr agent focus`. The zones do NOT bubble, so a tap on an agent focuses
+// it while a tap on empty space still advances the screen.
+static void herd_cell_click_cb(lv_event_t* e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    Serial.printf("{\"btn\":%d}\n", idx);
+}
+
 static void init_herd_screen(lv_obj_t* scr) {
     herd_container = lv_obj_create(scr);
     lv_obj_set_size(herd_container, SCR_W, SCR_H);
@@ -429,6 +440,19 @@ static void init_herd_screen(lv_obj_t* scr) {
         lv_obj_set_style_text_color(hd_cell_lbl[i], COL_DIM, 0);
         lv_label_set_text(hd_cell_lbl[i], "");
         lv_obj_add_flag(hd_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+
+        // Transparent tap zone covering the whole cell, on top of dot+label.
+        // No EVENT_BUBBLE: its click must not also trigger screen rotation.
+        hd_hit[i] = lv_obj_create(herd_container);
+        lv_obj_set_pos(hd_hit[i], x - 4, y - 4);
+        lv_obj_set_size(hd_hit[i], CW - 6, RH);
+        lv_obj_set_style_bg_opa(hd_hit[i], LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(hd_hit[i], 0, 0);
+        lv_obj_clear_flag(hd_hit[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(hd_hit[i], LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(hd_hit[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(hd_hit[i], herd_cell_click_cb, LV_EVENT_CLICKED,
+                            (void*)(intptr_t)i);
     }
 
     lbl_herd_focus = lv_label_create(herd_container);
@@ -575,9 +599,11 @@ void ui_update_herd(const HerdData* data) {
             lv_obj_set_style_text_decor(hd_cell_lbl[i],
                 focused ? LV_TEXT_DECOR_UNDERLINE : LV_TEXT_DECOR_NONE, 0);
             lv_obj_clear_flag(hd_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(hd_hit[i], LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(hd_dot[i], LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(hd_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(hd_hit[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
     lv_label_set_text(lbl_herd_sum, data->sum);

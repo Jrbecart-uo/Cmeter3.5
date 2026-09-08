@@ -17,6 +17,7 @@ import fcntl
 import json
 import os
 import re
+import select
 import shutil
 import socket
 import subprocess
@@ -149,6 +150,13 @@ HERDR_SOCK = os.environ.get("HERDR_SOCK",
 HERD_SHOW = set(os.environ.get("HERD_SHOW", "blocked,done").split(","))
 HERD_DEBOUNCE = float(os.environ.get("HERD_DEBOUNCE", "2"))
 
+# Tap-to-focus: the firmware sends {"btn":N} when a herd grid cell is tapped;
+# the reader thread maps N back to the pane_id at that index in the last-sent
+# grid and runs `herdr agent focus`. screenshot.sh touches PAUSE_PATH to make
+# the reader release the port while it captures the framebuffer stream.
+PAUSE_PATH = "/tmp/clawd-serial-reader.pause"
+_herd_panes = []   # pane_id per grid cell index, order of the last "g" string
+
 
 def herd_payload(show=False):
     if not HERDR:
@@ -159,6 +167,9 @@ def herd_payload(show=False):
     agents = json.loads(out).get("result", {}).get("agents", [])
     if not agents:
         return None
+
+    global _herd_panes
+    _herd_panes = [a.get("pane_id") for a in agents]
 
     parts, counts = [], {"working": 0, "blocked": 0, "idle": 0}
     focused = None
@@ -204,8 +215,10 @@ def _herd_watch_once():
     agents = json.loads(out).get("result", {}).get("agents", [])
     subs = [{"type": "pane.agent_status_changed", "pane_id": a["pane_id"]}
             for a in agents if a.get("pane_id")]
-    subs += [{"type": t} for t in
-             ("pane.created", "pane.closed", "pane.agent_detected", "pane.focused")]
+    # No pane.agent_detected here: herdr re-emits it periodically (not only for
+    # new panes) which churned a reconnect loop; new agents are picked up by
+    # the pane.created resubscribe and the 30s poll re-list.
+    subs += [{"type": t} for t in ("pane.created", "pane.closed", "pane.focused")]
 
     sk = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sk.connect(HERDR_SOCK)
@@ -232,14 +245,16 @@ def _herd_watch_once():
             if not events:
                 continue
             for e in events:
-                d = e.get("data") or {}
-                log(f"herd-watch: {e['event']}"
-                    f" {d.get('pane_id', '')} {d.get('agent_status', '')}".rstrip())
+                # Only status changes are worth a journal line; pane_focused
+                # can flap continuously and would spam the log.
+                if e["event"] == "pane.agent_status_changed":
+                    d = e.get("data") or {}
+                    log(f"herd-watch: {d.get('pane_id', '')} "
+                        f"-> {d.get('agent_status', '')}")
             # Pane set changed -> re-list and re-subscribe with fresh pane ids.
             # NB: herdr emits status events dotted (pane.agent_status_changed)
-            # but topology/focus events underscored (pane_agent_detected).
-            if any(e["event"].replace("_", ".") in
-                   ("pane.created", "pane.closed", "pane.agent.detected")
+            # but topology/focus events underscored (pane_created).
+            if any(e["event"].replace("_", ".") in ("pane.created", "pane.closed")
                    for e in events):
                 return True
             show = any(e["event"] == "pane.agent_status_changed" and
@@ -258,6 +273,62 @@ def _herd_watch_once():
                     log(f"herd event send failed: {e!r}")  # 30s loop will heal
     finally:
         sk.close()
+
+
+def handle_device_line(line):
+    """A line the DEVICE sent us. Only {"btn":N} acts; everything else the
+    firmware prints (USAGE_OK, boot logs, ...) is ignored."""
+    if not line.startswith("{"):
+        return
+    try:
+        m = json.loads(line)
+    except ValueError:
+        return
+    if "btn" not in m:
+        return
+    try:
+        i = int(m["btn"])
+    except (TypeError, ValueError):
+        return
+    pane = _herd_panes[i] if 0 <= i < len(_herd_panes) else None
+    if pane and HERDR:
+        rc, out = _run([HERDR, "agent", "focus", pane], timeout=10)
+        log(f"tap: cell {i} -> focus {pane}"
+            + ("" if rc == 0 else f" FAILED rc={rc} {out[:80]}"))
+    else:
+        log(f"tap: cell {i} — no pane mapped (herd list stale?)")
+
+
+def serial_reader():
+    """Continuously read the port for device->host lines (tap-to-focus).
+    Releases the port while PAUSE_PATH exists (screenshot.sh) and simply
+    retries while the port is missing (the write path owns usbipd healing)."""
+    while True:
+        try:
+            if os.path.exists(PAUSE_PATH):
+                time.sleep(0.5)
+                continue
+            fd = os.open(PORT, os.O_RDONLY | os.O_NOCTTY)
+            try:
+                buf = b""
+                while not os.path.exists(PAUSE_PATH):
+                    r, _, _ = select.select([fd], [], [], 0.5)
+                    if not r:
+                        continue
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        raise OSError("port EOF (device rebooted?)")
+                    buf = (buf + chunk)[-8192:]
+                    while b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        handle_device_line(line.decode("utf-8", "replace").strip())
+            finally:
+                os.close(fd)
+        except OSError:
+            time.sleep(3)
+        except Exception as e:  # noqa: BLE001 — reader must never die
+            log(f"reader: {e!r}")
+            time.sleep(3)
 
 
 def herd_watcher():
@@ -399,6 +470,8 @@ def main():
         f"herdr={HERDR or 'off'} herd_show={','.join(sorted(HERD_SHOW))}")
     if HERDR and not DRY:
         threading.Thread(target=herd_watcher, daemon=True).start()
+    if not DRY:
+        threading.Thread(target=serial_reader, daemon=True).start()
     while True:
         for label, fn in (("usage", usage_payload), ("status", status_payload),
                           ("herd", herd_payload)):

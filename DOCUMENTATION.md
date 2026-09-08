@@ -435,6 +435,8 @@ A third rotating screen showing every **herdr** agent (the terminal workspace
 manager for AI coding agents) as a dot grid — who's idle, who's working, and
 above all **who's blocked waiting on you**.
 
+![Herd screen](docs/img/herd-screen.png)
+
 ### 9.1 How it works
 
 ```
@@ -467,6 +469,21 @@ above all **who's blocked waiting on you**.
 - No herdr installed / not running → the payload is skipped and the screen
   simply drops out of the rotation (which now cycles Usage → Web Status →
   Herd across whichever screens have data).
+
+### 9.2 Tap-to-focus (remote control)
+
+**Tapping an agent cell focuses that pane on the desktop.** Each cell has a
+transparent LVGL hit zone that sends `{"btn":<cell-index>}` up the serial
+link (no bubbling, so a tap on empty space still advances the screen). The
+daemon runs a `serial_reader` thread that maps the index back to the pane id
+at that position in the last-sent grid and runs `herdr agent focus <pane>`.
+
+Because the daemon now *reads* the port continuously, `screenshot.sh`
+coordinates via a pause file (`/tmp/clawd-serial-reader.pause`): it touches
+the file, waits ~1 s for the reader to release the port, captures, and
+removes it. Anything else the firmware prints (`USAGE_OK`, boot logs) is
+ignored by the reader. Focus is deliberately the **only** device-initiated
+action — no blind "approve" buttons.
 
 ---
 
