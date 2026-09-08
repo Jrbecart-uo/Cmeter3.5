@@ -218,6 +218,16 @@ def handle_act(act):
     elif act == "tab":
         rc, out = _run([HERDR, "tab", "create", "--focus"], timeout=10)
         log("remote: new tab" + ("" if rc == 0 else f" FAILED {out[:80]}"))
+    elif act == "cli":
+        # New focused claude session (bypass-permissions — the user's usual
+        # agent-spawning mode), started in the focused pane's project dir.
+        focused, _ = _focused_agent()
+        cwd = (focused or {}).get("cwd") or str(Path.home())
+        rc, out = _run([HERDR, "agent", "start", "claude", "--cwd", cwd,
+                        "--focus", "--",
+                        "claude", "--dangerously-skip-permissions"], timeout=15)
+        log(f"remote: new claude CLI in {cwd}"
+            + ("" if rc == 0 else f" FAILED {out[:80]}"))
     elif act.startswith("sc"):
         try:
             i = int(act[2:])

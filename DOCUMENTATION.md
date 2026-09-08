@@ -492,7 +492,9 @@ control surface carries no info) with:
 
 - **`< Prev` / `Next >`** — focus the previous/next herdr pane (cycles the
   pane ring relative to the currently focused one); **`+ Tab`** — new focused
-  tab. All immediate, single tap.
+  tab; **`+ CLI`** — new focused tab running
+  `claude --dangerously-skip-permissions`, started in the focused pane's
+  project dir. All immediate, single tap.
 - **Four shortcut buttons** that type a canned prompt into the **focused**
   pane and submit it (`herdr pane run`). These are **arm/confirm**: first tap
   arms (blue "Tap again: …" banner + accent border), second tap within 4 s

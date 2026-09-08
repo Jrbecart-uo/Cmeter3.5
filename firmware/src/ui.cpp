@@ -568,14 +568,15 @@ static void init_remote_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_color(title, COL_TEXT, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, MARGIN, 8);
 
-    // Nav row: immediate actions
-    const int NAV_W = (CONTENT_W - 2 * 12) / 3, NAV_H = 48, NAV_Y = 52;
-    make_remote_btn(remote_container, MARGIN, NAV_Y, NAV_W, NAV_H,
-                    "< Prev", NULL, rm_nav_click_cb, (void*)"prev");
-    make_remote_btn(remote_container, MARGIN + NAV_W + 12, NAV_Y, NAV_W, NAV_H,
-                    "Next >", NULL, rm_nav_click_cb, (void*)"next");
-    make_remote_btn(remote_container, MARGIN + 2 * (NAV_W + 12), NAV_Y, NAV_W, NAV_H,
-                    "+ Tab", NULL, rm_nav_click_cb, (void*)"tab");
+    // Nav row: immediate actions ("cli" = new tab running claude in
+    // bypass-permissions mode — the user's usual way to spawn an agent)
+    const int NAV_W = (CONTENT_W - 3 * 12) / 4, NAV_H = 48, NAV_Y = 52;
+    static const char* const nav_acts[] = {"prev", "next", "tab", "cli"};
+    static const char* const nav_lbls[] = {"< Prev", "Next >", "+ Tab", "+ CLI"};
+    for (int i = 0; i < 4; i++)
+        make_remote_btn(remote_container, MARGIN + i * (NAV_W + 12), NAV_Y,
+                        NAV_W, NAV_H, nav_lbls[i], NULL,
+                        rm_nav_click_cb, (void*)nav_acts[i]);
 
     // Shortcut grid 2x2: arm/confirm actions (labels filled by the daemon)
     const int SC_W = (CONTENT_W - 14) / 2, SC_H = 64;
