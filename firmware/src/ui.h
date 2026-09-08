@@ -5,12 +5,14 @@ enum screen_t {
     SCREEN_SPLASH,
     SCREEN_USAGE,
     SCREEN_STATUS,
+    SCREEN_HERD,
     SCREEN_COUNT,
 };
 
 void ui_init(void);
 void ui_update(const UsageData* data);
 void ui_update_status(const StatusData* data);
+void ui_update_herd(const HerdData* data);
 void ui_tick_anim(void);
 void ui_tick_rotate(void);
 void ui_rotate_next(void);

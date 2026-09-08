@@ -18,8 +18,10 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -56,6 +58,19 @@ def find_usbipd():
 
 
 USBIPD = find_usbipd()
+
+
+def find_herdr():
+    cand = os.environ.get("HERDR_EXE")
+    if cand and Path(cand).exists():
+        return cand
+    default = Path.home() / ".local" / "bin" / "herdr"
+    if default.exists():
+        return str(default)
+    return shutil.which("herdr")
+
+
+HERDR = find_herdr()
 CREDS = Path.home() / ".claude" / ".credentials.json"
 API_URL = "https://api.anthropic.com/v1/messages"
 BODY = json.dumps({"model": "claude-haiku-4-5-20251001", "max_tokens": 1,
@@ -113,6 +128,150 @@ def usage_payload():
                        "w": round(u7 * 100), "wr": max(0, round((r7 - now) / 60)) if r7 else 0,
                        "st": str(st).strip(), "ok": True,
                        "clk": clk_string()}, separators=(",", ":"), ensure_ascii=False)
+
+
+# ---- herd (herdr agents) ----
+# Poll `herdr agent list` (local unix-socket CLI) and build a flat grid line,
+# same shape as the status board:
+#   {"hr":1,"g":"Clawdmeter=2;fam-k8s=1;...","sum":"1 working · 1 blocked",
+#    "fl":"focus: fam-k8s","clk":"8:23am · 04"}
+#   state: 0=idle 1=working 2=blocked 3=unknown; "*" prefix = focused pane.
+HERD_STATE = {"idle": 0, "working": 1, "blocked": 2}
+_prev_blocked = set()
+
+# Live watch: the herdr socket pushes pane.agent_status_changed events, so the
+# grid updates within ~2s instead of the 30s poll (which stays as a fallback
+# refresh). The device is force-switched to the Herd screen only for statuses
+# in HERD_SHOW — by default the ones that need eyes; working/idle flap on every
+# tool call and would pin the screen.
+HERDR_SOCK = os.environ.get("HERDR_SOCK",
+                            str(Path.home() / ".config" / "herdr" / "herdr.sock"))
+HERD_SHOW = set(os.environ.get("HERD_SHOW", "blocked,done").split(","))
+HERD_DEBOUNCE = float(os.environ.get("HERD_DEBOUNCE", "2"))
+
+
+def herd_payload(show=False):
+    if not HERDR:
+        return None
+    rc, out = _run([HERDR, "agent", "list"], timeout=10)
+    if rc != 0:
+        raise RuntimeError(f"herdr agent list rc={rc}: {out[:120]}")
+    agents = json.loads(out).get("result", {}).get("agents", [])
+    if not agents:
+        return None
+
+    parts, counts = [], {"working": 0, "blocked": 0, "idle": 0}
+    focused = None
+    for a in agents:
+        # 13 chars fits the device's 3-column herd grid (149px cells)
+        label = os.path.basename(a.get("cwd", "") or "?")[:13]
+        st = a.get("agent_status", "unknown")
+        counts[st] = counts.get(st, 0) + 1
+        if a.get("focused"):
+            focused = label
+            label = "*" + label[:12]
+        parts.append(f"{label}={HERD_STATE.get(st, 3)}")
+
+    # Edge-triggered "needs you" alert: a NEW blocked agent plays the existing
+    # permission banner+sound on the device (routine polls stay silent).
+    global _prev_blocked
+    blocked_now = {a.get("pane_id") for a in agents
+                   if a.get("agent_status") == "blocked"}
+    new_blocked = blocked_now - _prev_blocked
+    _prev_blocked = blocked_now
+    if new_blocked:
+        try:
+            send('{"ev":"permission"}')
+            log(f"herd: new blocked agent(s) {sorted(new_blocked)} — alerted")
+        except OSError:
+            pass  # main send path will heal the port; don't double-heal here
+
+    sum_line = f"{counts['working']} working · {counts['blocked']} blocked"
+    fl = f"focus: {focused}" if focused else ""
+    obj = {"hr": 1, "g": ";".join(parts), "sum": sum_line,
+           "fl": fl[:40], "clk": clk_string()}
+    if show:
+        obj["show"] = 1   # firmware switches to the Herd screen
+    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
+
+def _herd_watch_once():
+    """One subscribe-and-stream session. Returns True when exiting to refresh
+    the pane subscription set (topology changed); raises on errors."""
+    rc, out = _run([HERDR, "agent", "list"], timeout=10)
+    if rc != 0:
+        raise RuntimeError(f"agent list rc={rc}")
+    agents = json.loads(out).get("result", {}).get("agents", [])
+    subs = [{"type": "pane.agent_status_changed", "pane_id": a["pane_id"]}
+            for a in agents if a.get("pane_id")]
+    subs += [{"type": t} for t in
+             ("pane.created", "pane.closed", "pane.agent_detected", "pane.focused")]
+
+    sk = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sk.connect(HERDR_SOCK)
+    try:
+        sk.sendall((json.dumps({"id": "clawd", "method": "events.subscribe",
+                                "params": {"subscriptions": subs}}) + "\n").encode())
+        log(f"herd-watch: live ({len(agents)} panes)")
+        sk.settimeout(300)
+        last_push, buf = 0.0, b""
+        while True:
+            chunk = sk.recv(65536)
+            if not chunk:
+                raise RuntimeError("herdr socket closed")
+            buf += chunk
+            events = []
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                try:
+                    m = json.loads(line)
+                except ValueError:
+                    continue
+                if m.get("event"):
+                    events.append(m)
+            if not events:
+                continue
+            for e in events:
+                d = e.get("data") or {}
+                log(f"herd-watch: {e['event']}"
+                    f" {d.get('pane_id', '')} {d.get('agent_status', '')}".rstrip())
+            # Pane set changed -> re-list and re-subscribe with fresh pane ids.
+            # NB: herdr emits status events dotted (pane.agent_status_changed)
+            # but topology/focus events underscored (pane_agent_detected).
+            if any(e["event"].replace("_", ".") in
+                   ("pane.created", "pane.closed", "pane.agent.detected")
+                   for e in events):
+                return True
+            show = any(e["event"] == "pane.agent_status_changed" and
+                       (e.get("data") or {}).get("agent_status") in HERD_SHOW
+                       for e in events)
+            now = time.time()
+            if not show and now - last_push < HERD_DEBOUNCE:
+                continue
+            last_push = now
+            p = herd_payload(show=show)   # also fires the blocked banner+sound
+            if p:
+                try:
+                    send(p)
+                    log(f"herd event -> sent ({len(p)}B){' +show' if show else ''}")
+                except OSError as e:
+                    log(f"herd event send failed: {e!r}")  # 30s loop will heal
+    finally:
+        sk.close()
+
+
+def herd_watcher():
+    if not HERDR:
+        return
+    while True:
+        resub = False
+        try:
+            resub = _herd_watch_once()
+        except socket.timeout:
+            resub = True   # idle stream; reconnect to pick up new panes
+        except Exception as e:  # noqa: BLE001 — watcher must never die
+            log(f"herd-watch: {e!r} — retrying")
+        time.sleep(1 if resub else 10)
 
 
 # ---- status ----
@@ -236,9 +395,13 @@ def send_healing(line):
 
 def main():
     log(f"port={PORT} poll={POLL}s status_url={STATUS_URL} dry={DRY} "
-        f"heal={'on' if (HEAL and USBIPD) else 'off'} usbipd={USBIPD}")
+        f"heal={'on' if (HEAL and USBIPD) else 'off'} usbipd={USBIPD} "
+        f"herdr={HERDR or 'off'} herd_show={','.join(sorted(HERD_SHOW))}")
+    if HERDR and not DRY:
+        threading.Thread(target=herd_watcher, daemon=True).start()
     while True:
-        for label, fn in (("usage", usage_payload), ("status", status_payload)):
+        for label, fn in (("usage", usage_payload), ("status", status_payload),
+                          ("herd", herd_payload)):
             try:
                 # Payload build first: network errors land in the generic
                 # handler below and must NOT trigger a usbipd reattach.

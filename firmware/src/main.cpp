@@ -26,6 +26,7 @@ SensorQMI8658 imu;
 static UsageData usage = {};
 #if CLAWD_STATUS_SCREEN
 static StatusData statusData = {};
+static HerdData herdData = {};
 #endif
 
 // ---- Touch shared state (FT6336, polled once per loop; no INT line used) ----
@@ -160,6 +161,42 @@ static bool apply_status_json(const char* json) {
     }
     return true;
 }
+
+// Apply a FLAT herd payload ({"hr":1,...}) — herdr agent states, same
+// delimited-string scheme as the status board.
+static bool apply_herd_json(const char* json) {
+    JsonDocument doc;
+    if (deserializeJson(doc, json)) return false;
+    if (!doc["hr"].is<int>()) return false;   // marker; absent on other lines
+
+    strlcpy(herdData.sum, doc["sum"] | "", sizeof(herdData.sum));
+    strlcpy(herdData.focus, doc["fl"] | "", sizeof(herdData.focus));
+    strlcpy(herdData.clk, doc["clk"] | "", sizeof(herdData.clk));
+
+    static char gbuf[640];
+    strlcpy(gbuf, doc["g"] | "", sizeof(gbuf));
+    herdData.count = 0;
+    char* save = nullptr;
+    for (char* tok = strtok_r(gbuf, ";", &save);
+         tok && herdData.count < SB_MAX;
+         tok = strtok_r(nullptr, ";", &save)) {
+        char* eq = strchr(tok, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        strlcpy(herdData.items[herdData.count].name, tok,
+                sizeof(herdData.items[0].name));
+        herdData.items[herdData.count].state = (uint8_t) atoi(eq + 1);
+        herdData.count++;
+    }
+    herdData.valid = true;
+
+    ui_update_herd(&herdData);
+    // Daemon sets "show" on events that need eyes (agent blocked/done) —
+    // switch to the Herd screen; ui_show_screen holds it a full interval.
+    if ((doc["show"] | 0) && ui_get_current_screen() != SCREEN_SPLASH)
+        ui_show_screen(SCREEN_HERD);
+    return true;
+}
 #endif  // CLAWD_STATUS_SCREEN
 
 // Handle a Claude-session event line: {"ev":"task-complete"} etc.
@@ -235,6 +272,8 @@ static void check_serial_cmd() {
 #if CLAWD_STATUS_SCREEN
                 } else if (apply_status_json(cmd_buf)) {
                     Serial.println("STATUS_OK");
+                } else if (apply_herd_json(cmd_buf)) {
+                    Serial.println("HERD_OK");
 #endif
                 } else {
                     Serial.println(apply_usage_json(cmd_buf) ? "USAGE_OK" : "USAGE_ERR");

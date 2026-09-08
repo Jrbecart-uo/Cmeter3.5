@@ -16,6 +16,21 @@ in real time with a coloured banner and a Warcraft-peasant voice line
 > can run from WSL2. Full credit to the upstream project for the concept and
 > original firmware.
 
+## What's new
+
+- **2026-09-08 — Herd screen (live!).** A third rotating screen shows every
+  **herdr** agent as a dot grid — grey idle, amber working,
+  **red blocked** (an agent is waiting on you) — with the focused pane
+  underlined in orange. Updates are **pushed live** (~2 s) over herdr's unix
+  socket, and the device **auto-switches to the Herd screen** when an agent
+  goes `blocked`/`done` (plus banner + sound). See `DOCUMENTATION.md` §9.
+- **2026-09-04 — corner clock + status summary.** Time + day-of-month
+  bottom-right on every screen; "all systems OK **@ 8:23am**" freshness stamp;
+  top-right "21 up · 0 down" services summary that turns red on any failure.
+- **2026-08-21 — self-healing USB.** The combined daemon now runs a usbipd
+  detach→reattach cycle on any serial-write error, so replugs and dead
+  auto-attach watchers recover with no human in the loop.
+
 ## Hardware
 
 **[Waveshare ESP32-S3-Touch-LCD-3.5](https://www.waveshare.com/esp32-s3-touch-lcd-3.5.htm)**
@@ -40,8 +55,12 @@ in real time with a coloured banner and a Warcraft-peasant voice line
 - USB-serial transport — no Bluetooth, no buttons, USB-powered. Token never
   leaves the host.
 - **Web Status mode** *(optional)* — a second screen showing a services status
-  board (websites, APIs, clusters, DB, machines) as a green/red dot grid, which
-  the device auto-rotates with the usage screen (tap to advance).
+  board (websites, APIs, clusters, DB, machines) as a green/red dot grid.
+- **Herd screen** *(optional)* — a third screen showing your
+  **herdr** agents live (idle/working/**blocked**), pushed over
+  herdr's event socket; the device jumps to it when an agent needs you.
+- The device auto-rotates through the enabled screens every 30 s (tap to
+  advance); screens without data drop out of the rotation.
 
 ## Web Status mode
 

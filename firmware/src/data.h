@@ -30,3 +30,16 @@ struct StatusData {
     char clk[20];            // host-formatted corner clock, e.g. "8:23am · 04"
     bool valid;
 };
+
+// Herd (herdr agents) payload — same flat shape as the status board:
+//   {"hr":1,"g":"*fam-k8s=1;Clawdmeter=2;...","sum":"1 working · 1 blocked",
+//    "fl":"focus: fam-k8s","clk":"8:23am · 04"}
+//   state: 0=idle 1=working 2=blocked 3=unknown; "*" name prefix = focused.
+struct HerdData {
+    StatusItem items[SB_MAX];
+    int count;
+    char sum[40];            // pre-formatted "N working · M blocked"
+    char focus[44];          // pre-formatted "focus: <label>" (may be empty)
+    char clk[20];
+    bool valid;
+};

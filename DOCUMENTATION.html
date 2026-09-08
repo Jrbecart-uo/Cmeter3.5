@@ -428,7 +428,27 @@ systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now statusbo
 <h3 id="86-failure-history">8.6 Failure history</h3>
 <p>The poller records each <strong>failure episode</strong> (down → recovery) per target in <code>history.json</code>, kept for <strong>60 days</strong> (capped 50/item), and exposes them in <code>status.json</code> under <code>history</code> plus a <code>fails</code> count per item. Both the dt42 dashboard and the in-FAM <code>/admin/statusboard</code> page show a clickable <strong>clock icon</strong> on each tile (with a count badge) that opens a modal listing that item's past failures — down time, recovery, and duration. The ESP32 screen is unaffected (it shows live state only, not history).</p>
 <hr />
-<h2 id="9-credits">9. Credits</h2>
+<h2 id="9-herd-mode-herdr-agent-board">9. Herd mode (herdr agent board)</h2>
+<p>A third rotating screen showing every <strong>herdr</strong> agent (the terminal workspace manager for AI coding agents) as a dot grid — who's idle, who's working, and above all <strong>who's blocked waiting on you</strong>.</p>
+<h3 id="91-how-it-works">9.1 How it works</h3>
+<pre><code>  herdr server (unix socket ~/.config/herdr/herdr.sock)
+     │  `herdr agent list` every 30s poll cycle          (fallback refresh)
+     │  events.subscribe: pane.agent_status_changed etc.  (live push, ~2s)
+     v
+  combined daemon (clawd-combined-serial.py, herd_watcher thread)
+     v  {"hr":1,"g":"*fam-k8s=1;Clawdmeter=2;...","sum":"1 working · 1 blocked",
+         "fl":"focus: fam-k8s","clk":"8:23am · 04","show":1}
+  ESP32 firmware ──&gt; Herd grid (SCREEN_HERD)
+</code></pre>
+<ul>
+<li>The daemon subscribes on herdr's unix socket to <code>pane.agent_status_changed</code> (per pane) + pane created/closed/detected/focused, so the grid updates live (~2 s debounce) instead of waiting for the 30 s poll (kept as fallback). The watcher reconnects on socket loss and re-subscribes when panes change. NB: herdr names status events dotted (<code>pane.agent_status_changed</code>) but topology events underscored (<code>pane_agent_detected</code>) — the daemon handles both.</li>
+<li><code>g</code> states: <code>0</code>=idle (grey) <code>1</code>=working (amber) <code>2</code>=blocked (<strong>red</strong>) <code>3</code>=unknown. A <code>*</code> name prefix = the focused pane (accent orange + underlined on-device). Labels are cwd basenames, ≤13 chars (3-column grid).</li>
+<li><code>"show":1</code> makes the firmware <strong>switch to the Herd screen</strong> and hold it a full rotation interval. The daemon sets it only for statuses in <code>HERD_SHOW</code> (default <code>blocked,done</code> — working/idle flap on every agent turn and would pin the screen). A <em>new</em> blocked agent additionally fires the existing <code>{"ev":"permission"}</code> banner + sound, edge-triggered.</li>
+<li>Env knobs: <code>HERD_SHOW</code> (statuses that force the screen), <code>HERD_DEBOUNCE</code> (min s between event pushes, default 2), <code>HERDR_EXE</code>, <code>HERDR_SOCK</code>.</li>
+<li>No herdr installed / not running → the payload is skipped and the screen simply drops out of the rotation (which now cycles Usage → Web Status → Herd across whichever screens have data).</li>
+</ul>
+<hr />
+<h2 id="10-credits">10. Credits</h2>
 <ul>
 <li>Upstream Clawdmeter concept &amp; firmware: <strong>@hermannbjorgvin</strong>.</li>
 <li>Clawd pixel-art animation: <strong>@amaanbuilds</strong>.</li>

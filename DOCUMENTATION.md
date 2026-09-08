@@ -429,7 +429,48 @@ unaffected (it shows live state only, not history).
 
 ---
 
-## 9. Credits
+## 9. Herd mode (herdr agent board)
+
+A third rotating screen showing every **herdr** agent (the terminal workspace
+manager for AI coding agents) as a dot grid — who's idle, who's working, and
+above all **who's blocked waiting on you**.
+
+### 9.1 How it works
+
+```
+  herdr server (unix socket ~/.config/herdr/herdr.sock)
+     │  `herdr agent list` every 30s poll cycle          (fallback refresh)
+     │  events.subscribe: pane.agent_status_changed etc.  (live push, ~2s)
+     v
+  combined daemon (clawd-combined-serial.py, herd_watcher thread)
+     v  {"hr":1,"g":"*fam-k8s=1;Clawdmeter=2;...","sum":"1 working · 1 blocked",
+         "fl":"focus: fam-k8s","clk":"8:23am · 04","show":1}
+  ESP32 firmware ──> Herd grid (SCREEN_HERD)
+```
+
+- The daemon subscribes on herdr's unix socket to `pane.agent_status_changed`
+  (per pane) + pane created/closed/detected/focused, so the grid updates live
+  (~2 s debounce) instead of waiting for the 30 s poll (kept as fallback). The
+  watcher reconnects on socket loss and re-subscribes when panes change.
+  NB: herdr names status events dotted (`pane.agent_status_changed`) but
+  topology events underscored (`pane_agent_detected`) — the daemon handles both.
+- `g` states: `0`=idle (grey) `1`=working (amber) `2`=blocked (**red**)
+  `3`=unknown. A `*` name prefix = the focused pane (accent orange +
+  underlined on-device). Labels are cwd basenames, ≤13 chars (3-column grid).
+- `"show":1` makes the firmware **switch to the Herd screen** and hold it a
+  full rotation interval. The daemon sets it only for statuses in `HERD_SHOW`
+  (default `blocked,done` — working/idle flap on every agent turn and would
+  pin the screen). A *new* blocked agent additionally fires the existing
+  `{"ev":"permission"}` banner + sound, edge-triggered.
+- Env knobs: `HERD_SHOW` (statuses that force the screen), `HERD_DEBOUNCE`
+  (min s between event pushes, default 2), `HERDR_EXE`, `HERDR_SOCK`.
+- No herdr installed / not running → the payload is skipped and the screen
+  simply drops out of the rotation (which now cycles Usage → Web Status →
+  Herd across whichever screens have data).
+
+---
+
+## 10. Credits
 
 - Upstream Clawdmeter concept & firmware: **@hermannbjorgvin**.
 - Clawd pixel-art animation: **@amaanbuilds**.

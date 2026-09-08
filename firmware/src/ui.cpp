@@ -71,6 +71,18 @@ static lv_obj_t* lbl_usage_clock;
 static lv_obj_t* lbl_status_clock;
 static lv_obj_t* lbl_status_sum;    // top-right "N up · M down" summary
 
+// ---- Herd screen widgets (herdr agents; same pre-created-grid pattern) ----
+// 3 columns (wider than the status board's 4) so repo-name labels fit;
+// 6 rows before the bottom line -> 18 cells.
+#define HD_CELLS 18
+static lv_obj_t* herd_container;
+static lv_obj_t* lbl_herd_title;
+static lv_obj_t* hd_dot[HD_CELLS];
+static lv_obj_t* hd_cell_lbl[HD_CELLS];
+static lv_obj_t* lbl_herd_sum;      // top-right "N working · M blocked"
+static lv_obj_t* lbl_herd_focus;    // bottom-left "focus: <label>"
+static lv_obj_t* lbl_herd_clock;
+
 // ---- Logo (shared, on top) ----
 static lv_obj_t* logo_img;
 
@@ -82,6 +94,7 @@ static screen_t current_screen = SCREEN_USAGE;
 #define ROTATE_MS 30000
 static bool have_usage = false;
 static bool have_status = false;
+static bool have_herd = false;
 static uint32_t last_rotate_ms = 0;
 
 // Animation state
@@ -147,6 +160,7 @@ static void set_clock_labels(const char* clk) {
     if (!clk || !clk[0]) return;
     lv_label_set_text(lbl_usage_clock, clk);
     lv_label_set_text(lbl_status_clock, clk);
+    lv_label_set_text(lbl_herd_clock, clk);
 }
 
 static lv_color_t pct_color(float pct) {
@@ -375,6 +389,69 @@ static void init_status_screen(lv_obj_t* scr) {
     lv_obj_align(lbl_status_sum, LV_ALIGN_TOP_RIGHT, -MARGIN, 16);
 }
 
+// ======== Herd Screen (480x320 landscape) ========
+// herdr agent grid — same crash-safe pre-created dot+label cells as the
+// status board. Dot: dim=idle, amber=working, red=blocked. "*" prefix on the
+// label marks the focused pane.
+static void init_herd_screen(lv_obj_t* scr) {
+    herd_container = lv_obj_create(scr);
+    lv_obj_set_size(herd_container, SCR_W, SCR_H);
+    lv_obj_set_pos(herd_container, 0, 0);
+    lv_obj_set_style_bg_opa(herd_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(herd_container, 0, 0);
+    lv_obj_set_style_pad_all(herd_container, 0, 0);
+    lv_obj_clear_flag(herd_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(herd_container, global_click_cb, LV_EVENT_CLICKED, NULL);
+
+    lbl_herd_title = lv_label_create(herd_container);
+    lv_label_set_text(lbl_herd_title, "Herd");
+    lv_obj_set_style_text_font(lbl_herd_title, &font_styrene_28, 0);
+    lv_obj_set_style_text_color(lbl_herd_title, COL_TEXT, 0);
+    lv_obj_align(lbl_herd_title, LV_ALIGN_TOP_LEFT, MARGIN, 8);
+
+    const int COLS = 3, CW = 149, X0 = MARGIN, Y0 = 52, RH = 40;
+    for (int i = 0; i < HD_CELLS; i++) {
+        int x = X0 + (i % COLS) * CW;
+        int y = Y0 + (i / COLS) * RH;
+
+        hd_dot[i] = lv_obj_create(herd_container);
+        lv_obj_set_size(hd_dot[i], 16, 16);
+        lv_obj_set_pos(hd_dot[i], x, y + 3);
+        lv_obj_set_style_radius(hd_dot[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(hd_dot[i], 0, 0);
+        lv_obj_set_style_bg_color(hd_dot[i], COL_DIM, 0);
+        lv_obj_clear_flag(hd_dot[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(hd_dot[i], LV_OBJ_FLAG_HIDDEN);
+
+        hd_cell_lbl[i] = lv_label_create(herd_container);
+        lv_obj_set_pos(hd_cell_lbl[i], x + 22, y + 1);
+        lv_obj_set_style_text_font(hd_cell_lbl[i], &font_styrene_16, 0);
+        lv_obj_set_style_text_color(hd_cell_lbl[i], COL_DIM, 0);
+        lv_label_set_text(hd_cell_lbl[i], "");
+        lv_obj_add_flag(hd_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lbl_herd_focus = lv_label_create(herd_container);
+    lv_obj_set_pos(lbl_herd_focus, X0, 292);
+    lv_obj_set_width(lbl_herd_focus, 330);
+    lv_label_set_long_mode(lbl_herd_focus, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(lbl_herd_focus, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_herd_focus, COL_DIM, 0);
+    lv_label_set_text(lbl_herd_focus, "waiting for herd...");
+
+    lbl_herd_clock = lv_label_create(herd_container);
+    lv_label_set_text(lbl_herd_clock, "");
+    lv_obj_set_style_text_font(lbl_herd_clock, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_herd_clock, COL_DIM, 0);
+    lv_obj_align(lbl_herd_clock, LV_ALIGN_BOTTOM_RIGHT, -MARGIN, -8);
+
+    lbl_herd_sum = lv_label_create(herd_container);
+    lv_label_set_text(lbl_herd_sum, "");
+    lv_obj_set_style_text_font(lbl_herd_sum, &font_mono_18, 0);
+    lv_obj_set_style_text_color(lbl_herd_sum, COL_DIM, 0);
+    lv_obj_align(lbl_herd_sum, LV_ALIGN_TOP_RIGHT, -MARGIN, 16);
+}
+
 // ======== Bluetooth Screen (480x320 landscape) ========
 
 // ======== Public API ========
@@ -391,6 +468,7 @@ void ui_init(void) {
 
     init_usage_screen(scr);
     init_status_screen(scr);
+    init_herd_screen(scr);
     splash_init(scr);
 
     // Splash is touch-toggled — tap anywhere on the splash dismisses it
@@ -471,6 +549,46 @@ void ui_update_status(const StatusData* data) {
     set_clock_labels(data->clk);
 }
 
+// Update the herd grid — dim=idle(0), amber=working(1), red=blocked(2).
+void ui_update_herd(const HerdData* data) {
+    if (!data->valid) return;
+    have_herd = true;
+    int working = 0, blocked = 0;
+    for (int i = 0; i < HD_CELLS; i++) {
+        if (i < data->count) {
+            uint8_t st = data->items[i].state;
+            lv_color_t c = st == 2 ? COL_RED
+                         : st == 1 ? COL_AMBER : COL_DIM;
+            if (st == 1) working++;
+            if (st == 2) blocked++;
+            lv_obj_set_style_bg_color(hd_dot[i], c, 0);
+            lv_obj_clear_flag(hd_dot[i], LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(hd_cell_lbl[i], data->items[i].name);
+            // Label color mirrors urgency: blocked=red (matches dot),
+            // focused pane ("*" prefix)=accent orange + underline,
+            // working=bright, idle=dim.
+            bool focused = data->items[i].name[0] == '*';
+            lv_obj_set_style_text_color(hd_cell_lbl[i],
+                st == 2   ? COL_RED
+                : focused ? COL_ACCENT
+                : st == 1 ? COL_TEXT : COL_DIM, 0);
+            lv_obj_set_style_text_decor(hd_cell_lbl[i],
+                focused ? LV_TEXT_DECOR_UNDERLINE : LV_TEXT_DECOR_NONE, 0);
+            lv_obj_clear_flag(hd_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(hd_dot[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(hd_cell_lbl[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    lv_label_set_text(lbl_herd_sum, data->sum);
+    lv_obj_set_style_text_color(lbl_herd_sum,
+        blocked > 0 ? COL_RED : working > 0 ? COL_AMBER : COL_DIM, 0);
+    lv_obj_set_style_text_color(lbl_herd_title,
+        blocked > 0 ? COL_RED : COL_TEXT, 0);
+    lv_label_set_text(lbl_herd_focus, data->focus[0] ? data->focus : "");
+    set_clock_labels(data->clk);
+}
+
 void ui_tick_anim(void) {
     if (current_screen != SCREEN_USAGE) return;
 
@@ -511,26 +629,32 @@ static void global_click_cb(lv_event_t* e) {
 void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(status_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(herd_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
 
     switch (screen) {
     case SCREEN_SPLASH:     splash_show(); break;
     case SCREEN_USAGE:      lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
     case SCREEN_STATUS:     lv_obj_clear_flag(status_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_HERD:       lv_obj_clear_flag(herd_container, LV_OBJ_FLAG_HIDDEN); break;
     default: break;
     }
 
-    // Hide the logo overlay on the splash + status screens (splash needs a clean
-    // canvas; the status grid has its own title and the logo overlaps cell 1).
+    // Hide the logo overlay everywhere except the usage screen (splash needs a
+    // clean canvas; the grid screens have their own left-aligned titles where
+    // the logo would overlap).
     if (logo_img) {
-        if (screen == SCREEN_SPLASH || screen == SCREEN_STATUS)
-            lv_obj_add_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
-        else
+        if (screen == SCREEN_USAGE)
             lv_obj_clear_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_add_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
     }
 
     if (screen != SCREEN_SPLASH) prev_non_splash_screen = screen;
     current_screen = screen;
+    // Any explicit switch (tap, first data, event-driven show) earns a full
+    // rotation interval before auto-rotation moves on.
+    last_rotate_ms = lv_tick_get();
 }
 
 void ui_toggle_splash(void) {
@@ -538,16 +662,29 @@ void ui_toggle_splash(void) {
     else                                  ui_show_screen(SCREEN_SPLASH);
 }
 
-// Advance to the next info screen (Usage <-> Status) and reset the timer so a
-// manual tap gives you a full interval before auto-rotation moves on.
+// Advance to the next info screen (Usage -> Status -> Herd -> ...), skipping
+// screens whose data never arrived (e.g. herdr not running). Resets the timer
+// so a manual tap gives a full interval before auto-rotation moves on.
 void ui_rotate_next(void) {
-    ui_show_screen(current_screen == SCREEN_STATUS ? SCREEN_USAGE : SCREEN_STATUS);
+    static const screen_t order[] = {SCREEN_USAGE, SCREEN_STATUS, SCREEN_HERD};
+    const bool have[] = {have_usage, have_status, have_herd};
+    int cur = 0;
+    for (int i = 0; i < 3; i++)
+        if (order[i] == current_screen) cur = i;
+    for (int k = 1; k <= 3; k++) {
+        int n = (cur + k) % 3;
+        if (have[n] || k == 3) {   // k==3: nothing has data yet — just advance
+            ui_show_screen(order[n]);
+            break;
+        }
+    }
     last_rotate_ms = lv_tick_get();
 }
 
-// Called every loop; auto-rotates once BOTH datasets have arrived.
+// Called every loop; auto-rotates once at least two datasets have arrived.
 void ui_tick_rotate(void) {
-    if (!have_usage || !have_status) return;
+    int n = (have_usage ? 1 : 0) + (have_status ? 1 : 0) + (have_herd ? 1 : 0);
+    if (n < 2) return;
     if (current_screen == SCREEN_SPLASH) return;
     if (lv_tick_get() - last_rotate_ms >= ROTATE_MS) ui_rotate_next();
 }
