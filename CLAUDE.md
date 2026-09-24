@@ -33,9 +33,13 @@ Read this first, then `DOCUMENTATION.md` for the full install/troubleshooting gu
 
 ```text
 main.cpp        — setup/loop; ST7796+FT6336 init; serial RX router
-                  ({"s":..} usage  /  {"ev":..} events  /  "screenshot")
+                  ({"s":..} usage / {"sb":..} status / {"hr":..} herd /
+                   {"rm":..} remote labels / {"ev":..} events / "screenshot" /
+                   {"scr":N[,"pk":1]} debug screen-switch)
 display_cfg.h   — pins, 480×320 landscape, extern objects
-ui.{h,cpp}      — splash + usage screens (480×320 landscape) + event banner overlay
+ui.{h,cpp}      — 4 screens (Usage, Web Status, Herd, Remote) + splash + event
+                  banner; 30s rotation (Remote = manual-tap-only); corner clock;
+                  device→host taps: {"btn":i} herd cell, {"act":..} remote btns
 splash.{h,cpp}  — 20×20 pixel-art creature, 16× → 320×320 centred
 sound.{h,cpp}   — ES8311/I2S; embedded warcraft voice clips per event + boot beep
 sounds_warcraft.h — generated PCM (do NOT hand-edit; regen via ffmpeg+python, see DOCUMENTATION)
@@ -77,11 +81,13 @@ different admin account). One-off manual attach if needed: `usbipd attach --wsl 
 
 ## Run (host daemon + hooks)
 
-The daemon is wired as a systemd-user unit (`daemon/clawd-usage.service`,
-`Restart=always`, lingering enabled) — `systemctl --user status clawd-usage.service`. Manual:
+The ACTIVE daemon is **`clawd-combined-serial.service`** (systemd-user,
+`Restart=always`, lingering enabled) — `systemctl --user status
+clawd-combined-serial.service`, `journalctl --user -u clawd-combined-serial.service -f`.
+Always `systemctl --user stop` it before flashing, restart after. Manual run:
 
 ```bash
-nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 >/tmp/claude-usage.log 2>&1 &
+python3 daemon/clawd-combined-serial.py /dev/ttyACM0   # env: POLL, HERD_SHOW, DRY=1...
 ```
 Hooks (usage events → device sound+banner) are in `~/.claude/settings.json` (SessionStart,
 UserPromptSubmit, Stop, PostToolUseFailure, Notification → `daemon/clawd-event.sh`), mirroring
@@ -116,7 +122,32 @@ not proof the physical panel is lit (that lesson cost hours — see history). Bo
    Scheduled Task must therefore be registered with `-RunAsUser "<your-domain>\<your-user>"`
    — see memory `usbipd-autoattach`.
 
-## State (2026-05-22) — auto-attach wired
+## State (2026-09-08) — 4 screens + remote control
+
+Since the 2026-05-22 baseline below, the device grew (all in DOCUMENTATION.md §8–9):
+
+- **Web Status screen** (§8): dt42 poller → green/red dot grid; "N up · M down"
+  summary; "all systems OK @ <time>"; corner clock "8:23am · 04" on all screens.
+- **Herd screen** (§9): herdr agents live via unix-socket `events.subscribe`
+  (watcher thread, ~2s push; 30s poll fallback); grey/amber/red = idle/working/
+  blocked; focused pane orange+underlined; HERD_SHOW (default blocked,done)
+  auto-switches the screen + fires permission banner/sound on new blocked.
+  **Tap a cell → daemon runs `herdr agent focus`** (serial_reader thread;
+  screenshot.sh pauses it via /tmp/clawd-serial-reader.pause).
+- **Remote screen** (§9.3, manual-tap-only): < Prev / Next > / + Tab / + CLI
+  nav; + CLI opens a 6-button picker (5 most-used projects by 60-day session
+  count, pinned "projects" first, + accent "New tmp/" auto-mkdir); 4 arm/confirm
+  shortcut buttons (`herdr pane run` into focused pane) from
+  ~/.config/clawd/shortcuts.json (hot-reloaded, labels pushed to device).
+- **Daemon self-heal**: usbipd detach→reattach on any serial-write OSError.
+- herdr event-name quirk: status events dot-named (pane.agent_status_changed),
+  topology underscored (pane_created). pane_agent_detected re-emits periodically
+  — never use it as a resubscribe trigger (caused a reconnect loop).
+- **Untested by a human finger**: all physical taps (herd tap-to-focus, Remote
+  nav/shortcuts/picker) — QA was via {"scr":N,"pk":1} + serial screenshots +
+  stubbed unit tests only.
+
+## Baseline (2026-05-22) — auto-attach wired
 
 Project name **Cmeter3.5**; pushed to a personal GitHub fork (see `git remote -v`; SSH deploy
 key pinned via repo `core.sshCommand`, so `git push` from this repo just works). Docs:
