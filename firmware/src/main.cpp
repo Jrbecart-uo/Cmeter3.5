@@ -124,7 +124,7 @@ static bool apply_usage_json(const char* json) {
 // Apply a FLAT status-board payload. The item list comes as a delimited string
 // ("name=state;name=state;...") split with strtok — plain C, NOT a JSON array
 // (a JSON array on-device hung the parse).
-//   {"sb":1,"g":"fam=1;DB-prod=0;...","lf":"! last fail: ln2  2026-06-15 09:42"}
+//   {"sb":1,"g":"fam=1;DB-prod=0;...","lf":"ln2 down since Sep 22"}
 #if CLAWD_STATUS_SCREEN
 static bool apply_status_json(const char* json) {
     JsonDocument doc;

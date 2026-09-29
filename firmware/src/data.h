@@ -14,7 +14,7 @@ struct UsageData {
 
 // Status-board payload. The daemon sends a FLAT object whose "g" field is a
 // delimited string (NOT a JSON array — a JSON array on-device hung the parse):
-//   {"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;...","lf":"! last fail: ln2  2026-06-15 09:42"}
+//   {"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;...","lf":"ln2 down since Sep 22"}
 //   state: 1=ok 0=down 2=unknown.  The firmware splits "g" with strtok (plain C).
 #define SB_MAX 24
 

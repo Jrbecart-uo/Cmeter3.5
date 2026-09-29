@@ -347,10 +347,12 @@ The status line is a **flat** object — the item list is a delimited string, NO
 a JSON array:
 
 ```
-{"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...","lf":"! last fail: DB-prod  2026-06-15 10:15","clk":"8:23am · 04"}
+{"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...","lf":"DB-prod down since 10:15am","clk":"8:23am · 04"}
    sb : marker (1) so the firmware routes it to the status handler
    g  : "short=state;..."   state 1=ok 0=down 2=unknown
-   lf : pre-formatted bottom "last fail" line; when all green it carries the
+   lf : pre-formatted ONE-line bottom text (fits ~28 chars left of the clock):
+        newest outage start, "claude down since 10:23am" (today) or
+        "ln2 down since Sep 22" (older); when all green it carries the
         last poller check time ("all systems OK @ 8:23am")
    clk: host-formatted corner clock, "time · day-of-month" (device has no RTC;
         also sent on usage payloads — either one refreshes both screens'

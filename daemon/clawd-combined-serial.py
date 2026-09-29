@@ -540,27 +540,43 @@ def status_payload():
     return build_status_line(st)
 
 
+def parse_ts(s):
+    """dt42 timestamp ('2026-09-29 10:23[:SS]') -> struct_time, or None."""
+    for pat in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return time.strptime(s or "", pat)
+        except ValueError:
+            pass
+    return None
+
+
+def fmt_since(t):
+    """Outage start: '10:23am' if today, else 'Sep 22' (the date is enough)."""
+    if time.strftime("%Y-%m-%d", t) == time.strftime("%Y-%m-%d"):
+        return fmt_clock(t)
+    return time.strftime("%b %d", t).replace(" 0", " ")
+
+
 def build_status_line(st):
     # Flat "name=state;..." grid string (no JSON array on-device) + a
-    # pre-formatted "last fail" line built from the most recent failure.
+    # pre-formatted bottom line naming the newest outage. It must fit ONE line
+    # left of the corner clock (~28 mono_18 chars): "dt42:3000 down since
+    # 10:23am" is the worst case with a 9-char short name.
     items = st.get("items", [])
     g = ";".join(f"{i.get('short', '?')}={STATE_NUM.get(i.get('state'), 2)}" for i in items)
+    # last_failure = when the item's CURRENT outage began (set on the ok->down
+    # transition), so for a not-ok item it reads as "down since".
     fails = [(i.get("short", "?"), i.get("last_failure")) for i in items
              if i.get("state") != "ok" and i.get("last_failure")]
     if fails:
         fails.sort(key=lambda x: x[1], reverse=True)
-        lf = f"! last fail: {fails[0][0]}  {fails[0][1]}"
+        t = parse_ts(fails[0][1])
+        lf = f"{fails[0][0]} down since {fmt_since(t) if t else fails[0][1]}"
     else:
         # Append the time of the last poller check so an all-green board is
         # visibly fresh (a stale feed would otherwise look identical).
-        gen, chk = st.get("generated", ""), None
-        for pat in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-            try:
-                chk = fmt_clock(time.strptime(gen, pat))
-                break
-            except ValueError:
-                pass
-        lf = f"all systems OK @ {chk or fmt_clock()}"
+        t = parse_ts(st.get("generated"))
+        lf = f"all systems OK @ {fmt_clock(t) if t else fmt_clock()}"
     return json.dumps({"sb": 1, "g": g, "lf": lf[:54],
                        "clk": clk_string()}, separators=(",", ":"), ensure_ascii=False)
 

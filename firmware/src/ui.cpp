@@ -64,7 +64,7 @@ static lv_obj_t* status_container;
 static lv_obj_t* lbl_status_title;
 static lv_obj_t* sb_dot[SB_CELLS];
 static lv_obj_t* sb_cell_lbl[SB_CELLS];
-static lv_obj_t* lbl_status_lf;     // bottom "last fail" line
+static lv_obj_t* lbl_status_lf;     // bottom "<x> down since .." line
 
 // ---- Corner clock (host-formatted "8:23am · 04", one label per screen) ----
 static lv_obj_t* lbl_usage_clock;
@@ -353,7 +353,7 @@ static void init_usage_screen(lv_obj_t* scr) {
 // a title, a summary line, a RED label listing whatever needs attention, and a
 // Grid of dot+label cells (4 columns), pre-created here and only updated
 // (color/text/visibility) at runtime — no object creation or array parsing
-// in the hot path. Plus a bottom "last fail" line.
+// in the hot path. Plus a one-line bottom "<x> down since ..." line.
 static void init_status_screen(lv_obj_t* scr) {
     status_container = lv_obj_create(scr);
     lv_obj_set_size(status_container, SCR_W, SCR_H);
@@ -395,9 +395,10 @@ static void init_status_screen(lv_obj_t* scr) {
 
     lbl_status_lf = lv_label_create(status_container);
     lv_obj_set_pos(lbl_status_lf, X0, 292);
-    // Cap the width so a long "last fail" line can't run under the corner
-    // clock; overflow is elided with "..." by LVGL.
-    lv_obj_set_width(lbl_status_lf, 330);
+    // One line, stopping short of the corner clock ("11:05am · 29" starts at
+    // x~334). LONG_DOT only elides with "..." when the height is FIXED — with
+    // auto height it wraps, and the 2nd line fell off the bottom of the screen.
+    lv_obj_set_size(lbl_status_lf, 310, font_mono_18.line_height);
     lv_label_set_long_mode(lbl_status_lf, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(lbl_status_lf, &font_mono_18, 0);
     lv_obj_set_style_text_color(lbl_status_lf, COL_AMBER, 0);
