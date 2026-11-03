@@ -3,7 +3,10 @@
 # Usage: ./screenshot.sh [output.png] [port]
 
 OUTPUT="${1:-screenshot.png}"
-PORT="${2:-/dev/ttyACM0}"
+# Port = the Clawdmeter board found by its USB serial, never /dev/ttyACM0
+# (other ESP32/CH343 boards on this machine enumerate there too).
+PORT="${2:-$(bash "$(dirname "$0")/daemon/clawd-port.sh")}" || true
+[ -n "$PORT" ] || { echo "Clawdmeter board not attached (see daemon/clawd-port.sh)" >&2; exit 1; }
 
 TMPRAW=$(mktemp /tmp/screenshot_XXXXXX.raw)
 # The combined daemon holds a read loop on the port (tap-to-focus). Pause it

@@ -99,7 +99,7 @@ pixel-art Clawd splash.</em></p>
 </tr>
 <tr>
 <td>Power/USB</td>
-<td>USB-C (USB-JTAG/serial), <code>/dev/ttyACM0</code></td>
+<td>USB-C (USB-JTAG/serial), USB serial <code>1C:DB:D4:79:7F:3C</code> → <code>/dev/serial/by-id/…_1C:DB:D4:79:7F:3C-if00</code></td>
 <td>—</td>
 </tr>
 </tbody>
@@ -126,7 +126,7 @@ I²C scan shows 0x38 and <em>no</em> 0x3B, you have this board.</p>
                                                 └──────────────────────────┘
 </code></pre>
 <ul>
-<li><strong>Transport:</strong> USB serial (<code>/dev/ttyACM0</code>), newline-delimited JSON. No BLE.</li>
+<li><strong>Transport:</strong> USB serial (board found by its USB serial number via <code>daemon/clawd-port.sh</code>, never <code>/dev/ttyACM0</code>), newline-delimited JSON. No BLE.</li>
 <li><strong>Usage:</strong> <code>claude-usage-serial.py</code> POSTs a minimal request to
   <code>https://api.anthropic.com/v1/messages</code> and reads the
   <code>anthropic-ratelimit-unified-5h/7d-*</code> response headers, every 60 s. Token is
@@ -202,32 +202,102 @@ I²C scan shows 0x38 and <em>no</em> 0x3B, you have this board.</p>
 </ul>
 <h3 id="32-attach-the-device-to-wsl2">3.2 Attach the device to WSL2</h3>
 <p>In a <strong>Windows Administrator PowerShell</strong>:</p>
-<pre><code class="language-powershell">usbipd list                                   # find the ESP32-S3 (VID 303a:1001), note BUSID
+<pre><code class="language-powershell">usbipd state | ConvertFrom-Json | % Devices | ? InstanceId -like '*\1C:DB:D4:79:7F:3C' |
+    Select BusId, InstanceId                  # OUR board, by serial -&gt; its BUSID
 usbipd bind   --busid &lt;BUSID&gt;                 # one-time (persists)
 usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;  # re-run after every replug/reboot
 </code></pre>
-<p><code>&lt;Distro&gt;</code> is your WSL distribution name (e.g. <code>Ubuntu-24.04</code>).
-Confirm in WSL2: <code>ls /dev/ttyACM0</code>.</p>
-<p><strong>Recommended — auto-attach.</strong> Stage <code>usbipd-autoattach.ps1</code> to a Windows path
-and run it once from an Admin PowerShell with <code>-RunAsUser</code> set to the account
-that owns your WSL distro (required on AD/corp machines where UAC elevates to a
-different user):</p>
-<pre><code class="language-powershell">cd C:\Users\&lt;you&gt;
+<p><code>&lt;Distro&gt;</code> is your WSL distribution (e.g. <code>Ubuntu-24.04</code>). Confirm in WSL2:
+<code>daemon/clawd-port.sh</code> (prints <code>/dev/serial/by-id/..._1C:DB:D4:79:7F:3C-if00</code>).</p>
+<blockquote>
+<p><strong>Other ESP32 boards on this machine.</strong> Pick the board by its USB serial
+<code>1C:DB:D4:79:7F:3C</code> (the end of its <code>usbipd state</code> InstanceId), <strong>never</strong> by
+VID:PID <code>303a:1001</code> or by <code>/dev/ttyACM0</code>: every ESP32-S3 in USB-JTAG mode is
+<code>303a:1001</code> (hidprj's keyboard/mouse board — which must stay on Windows — and
+its radio dongle too), and whichever board enumerates first gets <code>ttyACM0</code>.
+Everything in this repo (daemon, hook, <code>flash.sh</code>, <code>screenshot.sh</code>, the
+auto-attach task) resolves the board through <code>CLAWD_SERIAL</code> and waits/aborts
+if it's absent. See <code>HIDPRJ-COEXISTENCE.md</code>.</p>
+</blockquote>
+<p><strong>Recommended — auto-attach (no more manual re-attach).</strong> The ESP32-S3 USB-JTAG
+re-enumerates on every flash and every reboot, so the manual <code>attach</code> above is
+the #1 reason "the device stops updating". Copy the bundled script to a
+Windows-side path (the <code>\\wsl.localhost\...</code> UNC isn't visible to an elevated
+shell running as a different account) and run it <strong>once</strong> in an Administrator
+PowerShell:</p>
+<pre><code class="language-bash"># In WSL: stage the script where Windows can read it.
+cp ./usbipd-autoattach.ps1 /mnt/c/Users/&lt;you&gt;/
+</code></pre>
+<pre><code class="language-powershell"># In Windows Admin PS:
+cd C:\Users\&lt;you&gt;
 powershell -ExecutionPolicy Bypass -File .\usbipd-autoattach.ps1 `
-    -RunAsUser "&lt;domain&gt;\&lt;your-user&gt;" `
+    -RunAsUser &quot;&lt;domain-or-host&gt;\&lt;your-user&gt;&quot; `
     -Distribution Ubuntu-24.04
 </code></pre>
+<ul>
+<li><code>-RunAsUser</code> is <strong>required</strong> on corporate / domain machines where UAC elevates
+  to a <em>different</em> account (e.g. <code>…\Administrator</code>). WSL2 distros are per-user,
+  so the Scheduled Task must run as the account that owns the distro, not the
+  admin account that registered it. On a personal machine where you're already
+  a local admin you can omit it.</li>
+<li><code>-Distribution</code> defaults to <code>Ubuntu-24.04</code>. Pass the name <code>wsl -l -q</code> shows.</li>
+<li><code>-Serial 1C:DB:D4:79:7F:3C</code> is the default (the Cmeter3.5 board); pass the
+  new serial if the board is ever replaced.</li>
+<li><code>.\usbipd-autoattach.ps1 -Remove</code> tears the Scheduled Task down.</li>
+</ul>
+<p>What the script does, once:</p>
+<ol>
+<li><code>usbipd bind --busid &lt;id&gt;</code> — persists the share for <strong>this board only</strong>
+   (busid looked up from the serial in <code>usbipd state</code>).</li>
+<li>Registers Scheduled Task <code>usbipd-esp32</code>, runs <strong>at logon as <code>-RunAsUser</code></strong>,
+   action = a PowerShell loop that every 5 s reads <code>usbipd state</code>, finds the
+   board by serial, and — if it is plugged in, shared and not attached — wakes
+   WSL (<code>wsl -d &lt;Distro&gt; -- true</code>) and runs <code>usbipd attach --wsl &lt;Distro&gt;
+   --busid &lt;its current busid&gt;</code>. (No <code>--auto-attach</code>: it can only pin a busid,
+   which changes between ports, or a hardware-id, which matches other boards.)</li>
+</ol>
+<p>After this: replug → auto-reattaches; reflash → same (USB-JTAG re-enumerates);
+reboot/logon → the task restarts the watcher. You never touch <code>usbipd attach</code>
+by hand again.</p>
 <h3 id="33-build-flash-the-firmware">3.3 Build &amp; flash the firmware</h3>
 <pre><code class="language-bash">./.piovenv/bin/pio run -d firmware
-./.piovenv/bin/pio run -d firmware -t upload --upload-port /dev/ttyACM0
+./flash.sh      # = pio upload to the board found by serial; stops/restarts the daemon
 </code></pre>
+<p>Never flash with <code>--upload-port /dev/ttyACM0</code> or pio's auto-detect: on a
+machine with other ESP32 boards attached that can overwrite <em>their</em> firmware.
+<code>flash.sh</code> refuses to run if the board isn't attached.</p>
 <p>On boot you should hear a two-tone <strong>self-test beep</strong> and see the <strong>Usage</strong>
 dashboard (dashes until the daemon feeds it).</p>
 <h3 id="34-start-the-usage-daemon-wsl2">3.4 Start the usage daemon (WSL2)</h3>
+<p>Quick / one-off:</p>
 <pre><code class="language-bash">nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 &gt;/tmp/claude-usage.log 2&gt;&amp;1 &amp;
 tail -f /tmp/claude-usage.log     # should log 'sent: {&quot;s&quot;:..}' every ~60s
 </code></pre>
-<p>Stdlib-only (no pip deps). <code>PORT=/dev/ttyACM0 POLL=60</code> are overridable via env.</p>
+<p><strong>Recommended — systemd user service (survives reboot).</strong> The <code>nohup</code> daemon
+dies on WSL shutdown and won't restart itself; if usage freezes while event
+banners still fire, this daemon is the thing that died. Install it once
+(WSL2 here has <code>systemd=true</code>):</p>
+<pre><code class="language-bash">mkdir -p ~/.config/systemd/user
+sed &quot;s#__REPO__#$(pwd)#g&quot; daemon/clawd-usage.service \
+    &gt; ~/.config/systemd/user/clawd-usage.service
+systemctl --user daemon-reload
+systemctl --user enable --now clawd-usage.service
+loginctl enable-linger &quot;$USER&quot;     # start at WSL boot w/o an open terminal
+</code></pre>
+<p>Manage it:</p>
+<pre><code class="language-bash">systemctl --user status clawd-usage.service
+journalctl --user -u clawd-usage.service -f      # or tail /tmp/claude-usage.log
+systemctl --user restart clawd-usage.service
+</code></pre>
+<p>Run <strong>either</strong> the <code>nohup</code> form <strong>or</strong> the service, not both (two pollers
+double-write the port — the service is the keeper). <code>Restart=always</code> brings it
+back if it crashes; it rides out the port coming and going with usbipd.</p>
+<p>Stdlib-only (no pip deps). <code>PORT=... POLL=60</code> are overridable via env.</p>
+<blockquote>
+<p><strong>Superseded:</strong> this usage-only daemon still uses <code>/dev/ttyACM0</code> and a
+hardware-id heal, so it now refuses to start. Use the combined daemon
+(§8.5), which selects the board by serial.</p>
+</blockquote>
 <h3 id="35-enable-claude-session-event-notifications">3.5 Enable Claude-session event notifications</h3>
 <p>Hooks live in <code>~/.claude/settings.json</code> (already added by this project, rtk
 <code>PreToolUse</code> preserved; backup at <code>settings.json.bak</code>):</p>
@@ -275,8 +345,12 @@ firing.</p>
 <hr />
 <h2 id="4-daily-use">4. Daily use</h2>
 <ol>
-<li>Nothing if you ran <code>usbipd-autoattach.ps1</code> (§3.2); otherwise (after reboot/replug) <code>usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;</code> in Windows admin PS.</li>
-<li><code>nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 &gt;/tmp/claude-usage.log 2&gt;&amp;1 &amp;</code></li>
+<li>Device attach: nothing to do if you ran <code>usbipd-autoattach.ps1</code> (§3.2);
+   otherwise <code>usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;</code> in a Windows admin
+   PS after each reboot/replug.</li>
+<li>Daemon: nothing to do if you installed the systemd user service (§3.4) —
+   it auto-starts at boot. Otherwise <code>nohup python3
+   daemon/claude-usage-serial.py /dev/ttyACM0 &gt;/tmp/claude-usage.log 2&gt;&amp;1 &amp;</code></li>
 <li>Use Claude Code normally — the dashboard tracks usage; banners + voices fire
    on session events.</li>
 </ol>
@@ -307,16 +381,32 @@ firing.</p>
 </thead>
 <tbody>
 <tr>
-<td>No <code>/dev/ttyACM0</code></td>
-<td>usbipd detached. One-off: <code>usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;</code> (Windows admin PS). Permanent: run <code>usbipd-autoattach.ps1 -RunAsUser "&lt;domain&gt;\&lt;you&gt;"</code> once (§3.2).</td>
+<td><code>daemon/clawd-port.sh</code> prints nothing (usage stops updating)</td>
+<td>usbipd detached (replug/reboot/flash re-enumerated the device). One-off fix: <code>usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;</code> (Windows admin PS). Permanent fix: run <code>usbipd-autoattach.ps1</code> once (§3.2). Then restart the daemon (next row).</td>
 </tr>
 <tr>
-<td>Daemon logs <code>PermissionError(13)</code> / <code>FileNotFoundError</code> every poll after a replug; device <code>Shared</code> but not <code>Attached</code></td>
-<td>The logon task's <code>--auto-attach</code> watcher died, so the replug never reached WSL. The combined daemon self-heals this (detach→reattach on any serial-write <code>OSError</code>) within one poll — check its journal for <code>heal:</code> lines. If heal is off/failing: one-off <code>usbipd attach</code> (non-elevated user PS) and check <code>heal=on</code> + a valid <code>usbipd=</code> path in the daemon's startup log.</td>
+<td>Daemon logs <code>PermissionError(13)</code> (or <code>FileNotFoundError</code>) every poll after a replug; usbipd shows the device <code>Shared</code> but not <code>Attached</code></td>
+<td>The logon task's <code>--auto-attach</code> watcher died, so the replug never reached WSL. The combined daemon self-heals this (detach→reattach on any serial-write <code>OSError</code>) within one poll — check its journal for <code>heal:</code> lines. If heal is off/failing: one-off <code>usbipd attach --wsl &lt;Distro&gt; --busid &lt;BUSID&gt;</code> (non-elevated user PS), and check <code>heal=on</code> + a valid <code>usbipd=</code> path in the daemon's startup log line.</td>
 </tr>
 <tr>
-<td>Dashboard shows dashes</td>
-<td>Daemon not running / token missing. Check <code>/tmp/claude-usage.log</code>; ensure Claude Code is logged in.</td>
+<td>Auto-attach Scheduled Task is <code>Running</code> but <code>/dev/ttyACM0</code> never appears</td>
+<td>Task is executing under the wrong user account (typical on AD/corp machines where UAC elevates to a different admin account). WSL2 distros are per-user, so the task can't reach yours. Re-run <code>usbipd-autoattach.ps1 -RunAsUser "&lt;domain&gt;\&lt;your-user&gt;"</code> (§3.2). Verify with <code>(Get-ScheduledTask usbipd-esp32).Principal.UserId</code> — must match the account that owns the WSL distro.</td>
+</tr>
+<tr>
+<td>After reboot/logon, task says <code>State: Running</code> but <code>LastRunTime</code> is stale (days old) and busid stays <code>Shared</code></td>
+<td>The AtLogOn trigger didn't fire — on AD machines the logon-event principal can be reported as SID / UPN / <code>DOMAIN\user</code> variants, and a trigger <code>-User</code> filter that string-matches one variant silently fails for the others. The bundled script now omits <code>-User</code> from the trigger; if you have an older registered task, re-run <code>usbipd-autoattach.ps1 -RunAsUser "&lt;domain&gt;\&lt;your-user&gt;"</code> to overwrite it. One-shot recovery (no re-register needed): <code>Stop-ScheduledTask usbipd-esp32; Start-ScheduledTask usbipd-esp32</code> in an Admin PS.</td>
+</tr>
+<tr>
+<td><code>usbipd attach: Unrecognized command or argument 'Ubuntu-24.04'</code></td>
+<td>usbipd-win ≥ 5.x changed syntax: distro is now <code>--wsl &lt;Name&gt;</code>, not <code>--wsl --distribution &lt;Name&gt;</code>. The bundled script uses the new form; if you're invoking manually, drop <code>--distribution</code>.</td>
+</tr>
+<tr>
+<td><code>wsl: There is no distribution with the supplied name</code> from an Admin PS</td>
+<td>UAC put you in a different account than the one that installed WSL. Either run the script with <code>-RunAsUser</code> (above) or open the Admin PS as the same user (right-click PowerShell → Run as administrator; check with <code>whoami</code>).</td>
+</tr>
+<tr>
+<td>Dashboard stale / shows dashes (but event banners still work)</td>
+<td>Usage daemon died — event banners are hook-driven and independent, so they keep working while polling is dead. <code>systemctl --user restart clawd-usage.service</code> (or check <code>/tmp/claude-usage.log</code>); ensure Claude Code is logged in for the token.</td>
 </tr>
 <tr>
 <td>No event banners/sounds</td>
@@ -363,61 +453,112 @@ ffmpeg -nostdin -y -i &quot;$SRC/&lt;event&gt;/&lt;clip&gt;.mp3&quot; \
 pitch-shifted.</p>
 <hr />
 <h2 id="8-web-status-mode-dt42-status-board">8. Web Status mode (dt42 status board)</h2>
-<p>A second screen that turns the device into a <strong>services status board</strong> — a grid of green/red dots for websites, APIs, clusters, databases and machines — that the device <strong>auto-rotates with the usage screen</strong> (every 30 s; tap to advance).</p>
-<p><img alt="Web Status screen — green/red dot grid of monitored services" src="docs/img/web-status-screen.png" /></p>
+<p>A second screen that turns the device into a <strong>services status board</strong> — a grid
+of green/red dots for websites, APIs, clusters, databases and machines — that
+the device <strong>auto-rotates with the usage screen</strong> (every 30 s; tap to advance).</p>
+<p><img alt="Web Status screen" src="docs/img/web-status-screen.png" /></p>
 <h3 id="81-architecture-end-to-end">8.1 Architecture (end to end)</h3>
 <pre><code>  targets.json  ──&gt;  dt42 poller (statusboard.py)  ──&gt;  status.json (HTTP :3004)
-   (what to                checks each target               |        |
-    monitor)                                                |        └─&gt; FAM web page
-                                                            |            (/admin/statusboard)
-                                                            v
-                             combined daemon (clawd-combined-serial.py)
-                                fetches usage + status.json, builds a
-                                FLAT line, writes it over USB serial
-                                                            v
-                                      ESP32 firmware ──&gt; Web Status grid
+   (what to                checks each target               │        │
+    monitor)                                                 │        └─&gt; FAM web page
+                                                             │            (/admin/statusboard,
+                                                             │             pushed by the poller)
+                                                             v
+                              combined daemon (clawd-combined-serial.py)
+                                 fetches usage + status.json, builds a
+                                 FLAT line, writes it over USB serial
+                                                             v
+                                       ESP32 firmware ──&gt; Web Status grid
 </code></pre>
 <ul>
-<li><strong><code>dt42/statusboard.py</code></strong> — a dependency-free poller (runs on the host <code>deepthought42</code>). Reads <code>targets.json</code>, checks every target on an interval, serves <code>status.json</code> + a web dashboard on <code>:3004</code>, and <em>pushes</em> the snapshot to the FAM web app(s) so the board is viewable in-app (<code>/admin/statusboard</code>).</li>
-<li><strong><code>daemon/clawd-combined-serial.py</code></strong> — feeds BOTH Claude usage and the status board over the one USB-serial link (so two daemons never fight over <code>/dev/ttyACM0</code>). Includes the usbipd <strong>self-heal</strong>: any <code>OSError</code> on the serial write (port missing, <code>PermissionError</code>/EACCES, dead USB-over-IP link) triggers a cooldown-guarded <code>usbipd</code> detach → one-shot attach → wait-for-stable-port cycle, then one retry. Network errors never trigger it. <code>HEAL=0</code> disables; <code>USBIPD_EXE</code>, <code>USBIPD_WSL_DISTRO</code>, <code>USBIPD_HWID</code>, <code>HEAL_COOLDOWN</code> override. Startup log shows <code>heal=on usbipd=&lt;path&gt;</code>.</li>
-<li><strong>Firmware</strong> — <code>SCREEN_STATUS</code> renders the dot grid; rotation + tap live in <code>ui.cpp</code> / <code>main.cpp</code>, gated by <code>CLAWD_STATUS_SCREEN</code> (see 8.4).</li>
+<li><strong><code>dt42/statusboard.py</code></strong> — a tiny dependency-free poller (runs on the host
+  <code>deepthought42</code>). It reads <code>targets.json</code>, checks every target on an interval,
+  serves <code>status.json</code> + a web dashboard on <code>:3004</code>, and <em>pushes</em> the snapshot to
+  the FAM web app(s) so the board is viewable in-app.</li>
+<li><strong><code>daemon/clawd-combined-serial.py</code></strong> — feeds BOTH Claude usage and the status
+  board to the device over the one USB-serial link (so two daemons never fight
+  over the port). The board is found by its USB serial (<code>CLAWD_SERIAL</code>,
+  default <code>1C:DB:D4:79:7F:3C</code>) under <code>/dev/serial/by-id/</code>, re-resolved on
+  every open; if it's absent the daemon logs <code>waiting: board ... not plugged
+  in</code> once and opens nothing. <strong>usbipd self-heal</strong>: a missing port or any
+  <code>OSError</code> on the serial write (<code>PermissionError</code>/EACCES, dead USB-over-IP
+  link) triggers a cooldown-guarded heal that looks the board up in <code>usbipd
+  state</code> by serial and — only if it is plugged in and shared — runs <code>usbipd
+  detach</code>/<code>attach --busid &lt;its busid&gt;</code> and waits for a stable port, then one
+  retry. Never <code>--hardware-id</code>. Network errors never trigger it. <code>HEAL=0</code>
+  disables; <code>USBIPD_EXE</code>, <code>USBIPD_WSL_DISTRO</code>, <code>HEAL_COOLDOWN</code> override.
+  Startup log shows <code>board=&lt;serial&gt; port=&lt;path|absent&gt; heal=on</code>.</li>
+<li><strong>Firmware</strong> — <code>SCREEN_STATUS</code> renders the dot grid; rotation + tap live in
+  <code>ui.cpp</code> / <code>main.cpp</code>, gated by <code>CLAWD_STATUS_SCREEN</code> (see 8.4).</li>
 </ul>
 <h3 id="82-the-serial-protocol-and-why-its-flat">8.2 The serial protocol (and why it's flat)</h3>
-<p>The status line is a <strong>flat</strong> object — the item list is a delimited string, NOT a JSON array:</p>
-<pre><code>{"sb":1,"g":"fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...","lf":"DB-prod down since 10:15am","clk":"8:23am · 04"}
+<p>The status line is a <strong>flat</strong> object — the item list is a delimited string, NOT
+a JSON array:</p>
+<pre><code>{&quot;sb&quot;:1,&quot;g&quot;:&quot;fam=1;fam-pp=1;DB-prod=0;dt42:3000=1;...&quot;,&quot;lf&quot;:&quot;DB-prod down since 10:15am&quot;,&quot;clk&quot;:&quot;8:23am · 04&quot;}
    sb : marker (1) so the firmware routes it to the status handler
-   g  : "short=state;..."   state 1=ok 0=down 2=unknown
+   g  : &quot;short=state;...&quot;   state 1=ok 0=down 2=unknown
    lf : pre-formatted ONE-line bottom text (fits ~28 chars left of the clock):
-        newest outage start, "claude down since 10:23am" (today) or
-        "ln2 down since Sep 22" (older); when all green it carries the
-        last poller check time ("all systems OK @ 8:23am")
-   clk: host-formatted corner clock, "time · day-of-month" (device has no RTC;
+        newest outage start, &quot;claude down since 10:23am&quot; (today) or
+        &quot;ln2 down since Sep 22&quot; (older); when all green it carries the
+        last poller check time (&quot;all systems OK @ 8:23am&quot;)
+   clk: host-formatted corner clock, &quot;time · day-of-month&quot; (device has no RTC;
         also sent on usage payloads — either one refreshes both screens'
         bottom-right corner). Raw UTF-8 (ensure_ascii=False), 12h no leading 0.
 </code></pre>
-<p>On-device the status screen also shows a top-right <strong>"N up · M down"</strong> summary counted from <code>g</code> — green when everything is up, red (with the title) the moment anything is down.</p>
-<p>The firmware splits <code>g</code> with <code>strtok</code> (plain C) and drives a <strong>pre-created grid of dot+label widgets</strong> — it never allocates or parses a JSON array at runtime. This is deliberate: an on-device <strong>JSON array parse hung the firmware</strong>; doing the formatting in the daemon and sending flat scalars (the same shape as the usage payload) is what made it reliable.</p>
-<h3 id="83-configuring-the-target-list">8.3 Configuring the target list (<code>targets.json</code>)</h3>
-<p>The list lives in <code>~/statusboard/targets.json</code> on dt42 (a sanitized copy is committed as <code>dt42/targets.example.json</code>). It is <strong>re-read every poll cycle</strong> — edit it and the change shows up on the device, the web dashboard and the FAM page within ~45 s, no restart.</p>
-<p>Each entry: <code>name</code> (full), <code>short</code> (the grid label — keep ≤ ~9 chars or it gets tight on the 4-column grid), and a check <code>type</code>:</p>
+<p>On-device the status screen also shows a top-right <strong>"N up · M down"</strong> summary
+counted from <code>g</code> — green when everything is up, red (with the title) the moment
+anything is down.</p>
+<p>The firmware splits <code>g</code> with <code>strtok</code> (plain C) and drives a <strong>pre-created grid
+of dot+label widgets</strong> — it never allocates or parses a JSON array at runtime.
+This is deliberate: an on-device <strong>JSON array parse hung the firmware</strong>; doing
+the formatting in the daemon and sending flat scalars (the same shape as the
+usage payload) is what made it reliable.</p>
+<h3 id="83-configuring-the-target-list-targetsjson">8.3 Configuring the target list (<code>targets.json</code>)</h3>
+<p>The list lives in <strong><code>~/statusboard/targets.json</code> on dt42</strong> (a sanitized copy is
+committed as <strong><code>dt42/targets.example.json</code></strong>). It is <strong>re-read every poll cycle</strong>
+— edit it and the change shows up on the device, the web dashboard and the FAM
+page within ~45 s, no restart.</p>
+<p>Each entry: <code>name</code> (full), <code>short</code> (the grid label — keep ≤ ~9 chars or it gets
+tight on the 4-column grid), and a check <code>type</code>:</p>
 <table>
-<thead><tr><th><code>type</code></th><th>Checks</th><th>Fields</th></tr></thead>
+<thead>
+<tr>
+<th><code>type</code></th>
+<th>Checks</th>
+<th>Fields</th>
+</tr>
+</thead>
 <tbody>
-<tr><td><code>https</code> / <code>http</code></td><td>GET the URL</td><td><code>url</code>; one of <code>ok_below</code> (up if code &lt; N), <code>ok_codes</code> (up if code in list), <code>expect_body</code> (up if body contains text); <code>insecure:true</code> skips TLS verify</td></tr>
-<tr><td><code>tcp</code></td><td>open host:port</td><td><code>host</code>, <code>port</code></td></tr>
-<tr><td><code>systemd_user</code></td><td><code>systemctl --user is-active</code></td><td><code>unit</code></td></tr>
+<tr>
+<td><code>https</code> / <code>http</code></td>
+<td>GET the URL</td>
+<td><code>url</code>; one of <code>ok_below</code> (up if code &lt; N), <code>ok_codes</code> (up if code ∈ list), <code>expect_body</code> (up if body contains text); <code>insecure:true</code> skips TLS verify</td>
+</tr>
+<tr>
+<td><code>tcp</code></td>
+<td>open host:port</td>
+<td><code>host</code>, <code>port</code></td>
+</tr>
+<tr>
+<td><code>systemd_user</code></td>
+<td><code>systemctl --user is-active</code></td>
+<td><code>unit</code></td>
+</tr>
 </tbody>
 </table>
-<p>Top-level keys: <code>port</code> (web dashboard, 3004), <code>poll_interval</code>, <code>timeout</code>, and <code>pushes</code> (list of <code>{url, token}</code> FAM ingest endpoints — <strong>holds the secret token, so the live file is git-ignored</strong>; the example uses a placeholder).</p>
+<p>Top-level keys: <code>port</code> (web dashboard, 3004), <code>poll_interval</code>, <code>timeout</code>, and
+<code>pushes</code> (list of <code>{url, token}</code> FAM ingest endpoints — <strong>holds the secret
+token, so the live file is git-ignored</strong>; the example uses a placeholder).</p>
 <h3 id="84-enabling-disabling-on-the-device">8.4 Enabling / disabling on the device</h3>
 <p><code>firmware/src/clawd_config.h</code>:</p>
 <pre><code class="language-c">#define CLAWD_STATUS_SCREEN 1   // 1 = Usage + Web Status (rotates); 0 = usage-only
 </code></pre>
-<p>Flip to <code>0</code> and re-flash for the original usage-only build (status lines ignored, no rotation, tap toggles the splash as before).</p>
+<p>Flip to <code>0</code> and re-flash for the original usage-only build (status lines ignored,
+no rotation, tap toggles the splash as before).</p>
 <h3 id="85-running-it">8.5 Running it</h3>
 <pre><code class="language-bash"># On the host with the device (combined usage + status):
 cp daemon/clawd-combined-serial.service ~/.config/systemd/user/
-systemctl --user disable --now clawd-usage.service statusboard-serial.service 2>/dev/null
+systemctl --user disable --now clawd-usage.service statusboard-serial.service 2&gt;/dev/null
 systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now clawd-combined-serial.service
 
 # On dt42 (the poller that owns targets.json + serves :3004 + pushes to FAM):
@@ -426,42 +567,97 @@ cp dt42/statusboard.py dt42/index.html ~/statusboard/
 cp dt42/statusboard.service ~/.config/systemd/user/
 systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now statusboard.service
 </code></pre>
-<p>Debug tip: <code>./screenshot.sh out.png</code> dumps the live framebuffer over serial — the only reliable way to see the screen, since native USB-CDC does <strong>not</strong> flush serial output before a firmware hang.</p>
+<p>Debug tip: <code>./screenshot.sh out.png</code> dumps the live framebuffer over serial —
+the only reliable way to see the screen, since native USB-CDC does <strong>not</strong> flush
+serial output before a firmware hang.</p>
 <h3 id="86-failure-history">8.6 Failure history</h3>
-<p>The poller records each <strong>failure episode</strong> (down → recovery) per target in <code>history.json</code>, kept for <strong>60 days</strong> (capped 50/item), and exposes them in <code>status.json</code> under <code>history</code> plus a <code>fails</code> count per item. Both the dt42 dashboard and the in-FAM <code>/admin/statusboard</code> page show a clickable <strong>clock icon</strong> on each tile (with a count badge) that opens a modal listing that item's past failures — down time, recovery, and duration. The ESP32 screen is unaffected (it shows live state only, not history).</p>
+<p>The poller records each <strong>failure episode</strong> (down → recovery) per target in
+<code>history.json</code>, kept for <strong>60 days</strong> (capped 50/item), and exposes them in
+<code>status.json</code> under <code>history</code> plus a <code>fails</code> count per item. Both the dt42
+dashboard and the in-FAM <code>/admin/statusboard</code> page show a clickable <strong>clock
+icon</strong> on each tile (with a count badge) that opens a modal listing that item's
+past failures — down time, recovery, and duration. The ESP32 screen is
+unaffected (it shows live state only, not history).</p>
 <hr />
 <h2 id="9-herd-mode-herdr-agent-board">9. Herd mode (herdr agent board)</h2>
-<p>A third rotating screen showing every <strong>herdr</strong> agent (the terminal workspace manager for AI coding agents) as a dot grid — who's idle, who's working, and above all <strong>who's blocked waiting on you</strong>.</p>
-<p><img src="docs/img/herd-screen.png" alt="Herd screen" /></p>
+<p>A third rotating screen showing every <strong>herdr</strong> agent (the terminal workspace
+manager for AI coding agents) as a dot grid — who's idle, who's working, and
+above all <strong>who's blocked waiting on you</strong>.</p>
+<p><img alt="Herd screen" src="docs/img/herd-screen.png" /></p>
 <h3 id="91-how-it-works">9.1 How it works</h3>
 <pre><code>  herdr server (unix socket ~/.config/herdr/herdr.sock)
      │  `herdr agent list` every 30s poll cycle          (fallback refresh)
      │  events.subscribe: pane.agent_status_changed etc.  (live push, ~2s)
      v
   combined daemon (clawd-combined-serial.py, herd_watcher thread)
-     v  {"hr":1,"g":"*fam-k8s=1;Clawdmeter=2;...","sum":"1 working · 1 blocked",
-         "fl":"focus: fam-k8s","clk":"8:23am · 04","show":1}
+     v  {&quot;hr&quot;:1,&quot;g&quot;:&quot;*fam-k8s=1;Clawdmeter=2;...&quot;,&quot;sum&quot;:&quot;1 working · 1 blocked&quot;,
+         &quot;fl&quot;:&quot;focus: fam-k8s&quot;,&quot;clk&quot;:&quot;8:23am · 04&quot;,&quot;show&quot;:1}
   ESP32 firmware ──&gt; Herd grid (SCREEN_HERD)
 </code></pre>
 <ul>
-<li>The daemon subscribes on herdr's unix socket to <code>pane.agent_status_changed</code> (per pane) + pane created/closed/detected/focused, so the grid updates live (~2 s debounce) instead of waiting for the 30 s poll (kept as fallback). The watcher reconnects on socket loss and re-subscribes when panes change. NB: herdr names status events dotted (<code>pane.agent_status_changed</code>) but topology events underscored (<code>pane_agent_detected</code>) — the daemon handles both.</li>
-<li><code>g</code> states: <code>0</code>=idle (grey) <code>1</code>=working (amber) <code>2</code>=blocked (<strong>red</strong>) <code>3</code>=unknown. A <code>*</code> name prefix = the focused pane (accent orange + underlined on-device). Labels are cwd basenames, ≤13 chars (3-column grid).</li>
-<li><code>"show":1</code> makes the firmware <strong>switch to the Herd screen</strong> and hold it a full rotation interval. The daemon sets it only for statuses in <code>HERD_SHOW</code> (default <code>blocked,done</code> — working/idle flap on every agent turn and would pin the screen). A <em>new</em> blocked agent additionally fires the existing <code>{"ev":"permission"}</code> banner + sound, edge-triggered.</li>
-<li>Env knobs: <code>HERD_SHOW</code> (statuses that force the screen), <code>HERD_DEBOUNCE</code> (min s between event pushes, default 2), <code>HERDR_EXE</code>, <code>HERDR_SOCK</code>.</li>
-<li>No herdr installed / not running → the payload is skipped and the screen simply drops out of the rotation (which now cycles Usage → Web Status → Herd across whichever screens have data).</li>
+<li>The daemon subscribes on herdr's unix socket to <code>pane.agent_status_changed</code>
+  (per pane) + pane created/closed/detected/focused, so the grid updates live
+  (~2 s debounce) instead of waiting for the 30 s poll (kept as fallback). The
+  watcher reconnects on socket loss and re-subscribes when panes change.
+  NB: herdr names status events dotted (<code>pane.agent_status_changed</code>) but
+  topology events underscored (<code>pane_agent_detected</code>) — the daemon handles both.</li>
+<li><code>g</code> states: <code>0</code>=idle (grey) <code>1</code>=working (amber) <code>2</code>=blocked (<strong>red</strong>)
+  <code>3</code>=unknown. A <code>*</code> name prefix = the focused pane (accent orange +
+  underlined on-device). Labels are cwd basenames, ≤13 chars (3-column grid).</li>
+<li><code>"show":1</code> makes the firmware <strong>switch to the Herd screen</strong> and hold it a
+  full rotation interval. The daemon sets it only for statuses in <code>HERD_SHOW</code>
+  (default <code>blocked,done</code> — working/idle flap on every agent turn and would
+  pin the screen). A <em>new</em> blocked agent additionally fires the existing
+  <code>{"ev":"permission"}</code> banner + sound, edge-triggered.</li>
+<li>Env knobs: <code>HERD_SHOW</code> (statuses that force the screen), <code>HERD_DEBOUNCE</code>
+  (min s between event pushes, default 2), <code>HERDR_EXE</code>, <code>HERDR_SOCK</code>.</li>
+<li>No herdr installed / not running → the payload is skipped and the screen
+  simply drops out of the rotation (which now cycles Usage → Web Status →
+  Herd across whichever screens have data).</li>
 </ul>
 <h3 id="92-tap-to-focus-remote-control">9.2 Tap-to-focus (remote control)</h3>
-<p><strong>Tapping an agent cell focuses that pane on the desktop.</strong> Each cell has a transparent LVGL hit zone that sends <code>{"btn":&lt;cell-index&gt;}</code> up the serial link (no bubbling, so a tap on empty space still advances the screen). The daemon runs a <code>serial_reader</code> thread that maps the index back to the pane id at that position in the last-sent grid and runs <code>herdr agent focus &lt;pane&gt;</code>.</p>
-<p>Because the daemon now <em>reads</em> the port continuously, <code>screenshot.sh</code> coordinates via a pause file (<code>/tmp/clawd-serial-reader.pause</code>): it touches the file, waits ~1 s for the reader to release the port, captures, and removes it. Anything else the firmware prints (<code>USAGE_OK</code>, boot logs) is ignored by the reader. Focus is deliberately the <strong>only</strong> device-initiated action — no blind "approve" buttons.</p>
+<p><strong>Tapping an agent cell focuses that pane on the desktop.</strong> Each cell has a
+transparent LVGL hit zone that sends <code>{"btn":&lt;cell-index&gt;}</code> up the serial
+link (no bubbling, so a tap on empty space still advances the screen). The
+daemon runs a <code>serial_reader</code> thread that maps the index back to the pane id
+at that position in the last-sent grid and runs <code>herdr agent focus &lt;pane&gt;</code>.</p>
+<p>Because the daemon now <em>reads</em> the port continuously, <code>screenshot.sh</code>
+coordinates via a pause file (<code>/tmp/clawd-serial-reader.pause</code>): it touches
+the file, waits ~1 s for the reader to release the port, captures, and
+removes it. Anything else the firmware prints (<code>USAGE_OK</code>, boot logs) is
+ignored by the reader. Focus is deliberately the <strong>only</strong> device-initiated
+action — no blind "approve" buttons.</p>
 <h3 id="93-remote-screen-nav-shortcut-prompts">9.3 Remote screen (nav + shortcut prompts)</h3>
-<p>A fourth screen (reachable by <strong>tap only</strong> — auto-rotation skips it, since a control surface carries no info) with:</p>
+<p>A fourth screen (reachable by <strong>tap only</strong> — auto-rotation skips it, since a
+control surface carries no info) with:</p>
 <ul>
-<li><strong><code>&lt; Prev</code> / <code>Next &gt;</code></strong> — focus the previous/next herdr pane (cycles the pane ring relative to the currently focused one); <strong><code>+ Tab</code></strong> — new focused tab. Immediate, single tap.</li>
-<li><strong><code>+ CLI</code></strong> — spawn a new focused <code>claude --dangerously-skip-permissions</code> session, with a <strong>project picker</strong>: the first tap swaps the shortcut area for a ~6 s 6-button chooser — five project dirs (pinned <code>"projects"</code> from <code>shortcuts.json</code> first, then the most used of <code>~/.claude/projects</code> ranked by session count over the last 60 days, existence-verified via a filesystem-guided slug decode) plus an accent-colored <strong><code>New tmp/</code></strong>, which mkdirs an auto-named scratch dir (<code>tmp-MMDD-HHMM</code> under <code>CLAWD_TMP_BASE</code>, default <code>~/tmp</code>) and spawns there. Tapping <code>+ CLI</code> a second time means "here" (the focused pane's dir); timeout reverts to the shortcuts with nothing spawned.</li>
-<li><strong>Four shortcut buttons</strong> that type a canned prompt into the <strong>focused</strong> pane and submit it (<code>herdr pane run</code>). These are <strong>arm/confirm</strong>: first tap arms (blue "Tap again: …" banner + accent border), second tap within 4 s sends (green "Sent: …" banner). Leaving the screen disarms.</li>
-<li>Prompts live in <strong><code>~/.config/clawd/shortcuts.json</code></strong> (seeded from <code>daemon/shortcuts.example.json</code> on first run; re-read every cycle, so edits apply without a restart). The daemon pushes the labels to the device (<code>{"rm":1,"b0":...}</code>) so the buttons always show what would be sent. The defaults were mined from real session history: <strong>Wrap up</strong> (save + notes + commit/push + handoff summary), <strong>Commit+push</strong>, <strong>Progress?</strong>, <strong>Continue</strong>.</li>
+<li><strong><code>&lt; Prev</code> / <code>Next &gt;</code></strong> — focus the previous/next herdr pane (cycles the
+  pane ring relative to the currently focused one); <strong><code>+ Tab</code></strong> — new focused
+  tab. Immediate, single tap.</li>
+<li><strong><code>+ CLI</code></strong> — spawn a new focused <code>claude --dangerously-skip-permissions</code>
+  session, with a <strong>project picker</strong>: the first tap swaps the shortcut area
+  for a ~6 s 6-button chooser — five project dirs (pinned <code>"projects"</code> from
+  <code>shortcuts.json</code> first, then the most used of <code>~/.claude/projects</code> ranked
+  by session count over the last 60 days, existence-verified via a
+  filesystem-guided slug decode) plus an accent-colored <strong><code>New tmp/</code></strong>, which
+  mkdirs an auto-named scratch dir (<code>tmp-MMDD-HHMM</code> under <code>CLAWD_TMP_BASE</code>,
+  default <code>~/tmp</code>) and spawns there.
+  Tapping <code>+ CLI</code> a second time means "here" (the focused pane's dir);
+  timeout reverts to the shortcuts with nothing spawned.</li>
+<li><strong>Four shortcut buttons</strong> that type a canned prompt into the <strong>focused</strong>
+  pane and submit it (<code>herdr pane run</code>). These are <strong>arm/confirm</strong>: first tap
+  arms (blue "Tap again: …" banner + accent border), second tap within 4 s
+  sends (green "Sent: …" banner). Leaving the screen disarms.</li>
+<li>Prompts live in <strong><code>~/.config/clawd/shortcuts.json</code></strong> (seeded from
+  <code>daemon/shortcuts.example.json</code> on first run; re-read every cycle, so edits
+  apply without a restart). The daemon pushes the labels to the device
+  (<code>{"rm":1,"b0":...}</code>) so the buttons always show what would be sent. The
+  defaults were mined from real session history: <strong>Wrap up</strong> (save + notes +
+  commit/push + handoff summary), <strong>Commit+push</strong>, <strong>Progress?</strong>, <strong>Continue</strong>.</li>
 <li>The bottom-left <code>focus:</code> line shows which pane the buttons act on.</li>
-<li>Debug: the serial line <code>{"scr":N}</code> switches to screen N (screen_t order: splash, usage, status, herd, remote) — how the host screenshots the tap-only Remote screen.</li>
+<li>Debug: the serial line <code>{"scr":N}</code> switches to screen N (screen_t order:
+  splash, usage, status, herd, remote) — how the host screenshots the
+  tap-only Remote screen.</li>
 </ul>
 <hr />
 <h2 id="10-credits">10. Credits</h2>
@@ -471,5 +667,4 @@ systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now statusbo
 <li>Event sound effects: the <strong>game-sounds</strong> Claude Code plugin (citedy) — warcraft pack.</li>
 <li>This ESP32-S3-Touch-LCD-3.5 port + USB-serial/sound/event work: Jean-Roch Bécart.</li>
 </ul>
-<div class="footer">Generated from DOCUMENTATION.md — Cmeter3.5 (fork of Clawdmeter by @hermannbjorgvin), ESP32-S3-Touch-LCD-3.5.</div>
 </main></body></html>

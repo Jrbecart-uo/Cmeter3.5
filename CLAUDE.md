@@ -64,17 +64,19 @@ No BLE, no `ble.*`. Transport is USB serial only. Touch handled in `ui.cpp` via 
 ## Build / flash
 
 ```bash
-./.piovenv/bin/pio run -d firmware                                       # build
-./.piovenv/bin/pio run -d firmware -t upload --upload-port /dev/ttyACM0  # flash
+./.piovenv/bin/pio run -d firmware      # build
+./flash.sh                              # flash (finds the board by serial; stops/restarts daemon)
 ```
 
 PlatformIO is not system-wide for this user — use `./.piovenv/bin/pio` (venv at repo root,
-git-ignored). Env: `waveshare_touch_lcd_35`. Device = `/dev/ttyACM0` (USB-JTAG).
+git-ignored). Env: `waveshare_touch_lcd_35`. **Never** `--upload-port /dev/ttyACM0` or pio
+auto-detect — see gotcha 9. Board = USB serial **`1C:DB:D4:79:7F:3C`** (USB-JTAG),
+port = `daemon/clawd-port.sh` (`/dev/serial/by-id/*_1C:DB:D4:79:7F:3C-if00`).
 
-**WSL2:** `/dev/ttyACM0` only exists once usbipd has attached the device. Auto-attach is
-wired in this repo — `usbipd-autoattach.ps1` registers a Windows Scheduled Task `usbipd-esp32`
-that, at every logon, wakes WSL and runs `usbipd attach --wsl Ubuntu-24.04 --hardware-id
-303a:1001 --auto-attach`. The task must RUN AS the user that owns the WSL distro
+**WSL2:** the port only exists once usbipd has attached the board. Auto-attach is wired in
+this repo — `usbipd-autoattach.ps1` binds ONLY this board and registers a Windows Scheduled
+Task `usbipd-esp32` that polls `usbipd state` every 5s and attaches the board (serial →
+current busid) when plugged in. The task must RUN AS the user that owns the WSL distro
 (`-RunAsUser "<your-domain>\<your-user>"` on a corp/AD machine, since UAC elevates to a
 different admin account). One-off manual attach if needed: `usbipd attach --wsl Ubuntu-24.04
 --busid <id>` in a non-elevated user PowerShell.
@@ -87,7 +89,7 @@ clawd-combined-serial.service`, `journalctl --user -u clawd-combined-serial.serv
 Always `systemctl --user stop` it before flashing, restart after. Manual run:
 
 ```bash
-python3 daemon/clawd-combined-serial.py /dev/ttyACM0   # env: POLL, HERD_SHOW, DRY=1...
+python3 daemon/clawd-combined-serial.py   # env: CLAWD_SERIAL, POLL, HERD_SHOW, DRY=1...
 ```
 Hooks (usage events → device sound+banner) are in `~/.claude/settings.json` (SessionStart,
 UserPromptSubmit, Stop, PostToolUseFailure, Notification → `daemon/clawd-event.sh`), mirroring
@@ -95,7 +97,7 @@ the `game-sounds` plugin's 5 categories. Hooks load at Claude Code session start
 
 ## QA UI changes — don't ask the user
 
-`screenshot` serial cmd dumps the LVGL framebuffer: `bash screenshot.sh out.png /dev/ttyACM0`
+`screenshot` serial cmd dumps the LVGL framebuffer: `bash screenshot.sh out.png`
 → 480×320 PNG (auto-detects dims). Read it, verify, iterate. NOTE: this is the *framebuffer*,
 not proof the physical panel is lit (that lesson cost hours — see history). Boots to
 `SCREEN_USAGE` now (no button needed). Landscape layout constants are at the top of `ui.cpp`.
@@ -115,12 +117,19 @@ not proof the physical panel is lit (that lesson cost hours — see history). Bo
 6. **Repo hygiene.** `device/` (399MB, >100MB zip) is git-ignored — never commit it.
    `firmware/lib/` IS committed (required vendored deps). `.piovenv/` ignored.
 7. **usbipd-win 5.x syntax.** Distro goes as the *value* of `--wsl`, NOT under `--distribution`
-   (that flag was removed). Use `usbipd attach --wsl Ubuntu-24.04 --hardware-id 303a:1001
-   --auto-attach`. The script in-tree uses the correct form.
+   (that flag was removed). Use `usbipd attach --wsl Ubuntu-24.04 --busid <id>` (never
+   `--hardware-id`, see 9). The script in-tree uses the correct form.
 8. **Corp/AD elevation gotcha.** If the user that owns the WSL distro isn't a local admin,
    UAC gives an Admin PS as a *different* account that has no WSL distro of its own. The
    Scheduled Task must therefore be registered with `-RunAsUser "<your-domain>\<your-user>"`
    — see memory `usbipd-autoattach`.
+9. **Shared machine — other ESP32 boards (since 2026-10-22).** `~/tmp/hidprj` runs an
+   ESP32-S3 USB keyboard/mouse board (MUST stay on Windows) and an ESP32-S3+CH343 radio
+   dongle that is often `/dev/ttyACM0` in WSL. They share VID:PID `303a:1001`. So: select
+   the board ONLY by serial `1C:DB:D4:79:7F:3C` (`daemon/clawd-port.sh`, `CLAWD_SERIAL`);
+   absent board = wait/abort, never fall back. usbipd only by busid resolved from that
+   serial in `usbipd state` — never `bind/attach/detach --hardware-id 303a:1001`. Never
+   open, flash or usbipd-touch any other board. See `HIDPRJ-COEXISTENCE.md`.
 
 ## State (2026-09-08) — 4 screens + remote control
 

@@ -5,7 +5,8 @@ After=network-online.target
 [Service]
 Type=simple
 Environment=STATUS_URL=http://10.136.128.10:3004/status.json
-Environment=PORT=/dev/ttyACM0
+# The board is found by its USB serial, never by /dev/ttyACM0 (other boards use it)
+Environment=CLAWD_SERIAL=1C:DB:D4:79:7F:3C
 Environment=POLL=30
 ExecStart=/usr/bin/python3 %h/tmp/Clawdmeter/daemon/clawd-combined-serial.py
 Restart=on-failure

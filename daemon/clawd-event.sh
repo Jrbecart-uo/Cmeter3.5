@@ -6,9 +6,11 @@
 # MUST never block or fail a Claude session: short flock timeout, always exit 0,
 # silently no-op if the device isn't attached.
 #
-# Usage: clawd-event.sh <event-name>   (CLAWD_PORT overrides /dev/ttyACM0)
+# Usage: clawd-event.sh <event-name>
+#   The port is found by the board's USB serial (clawd-port.sh), never by
+#   /dev/ttyACM0 — that can be someone else's board. CLAWD_PORT overrides.
 
-PORT="${CLAWD_PORT:-/dev/ttyACM0}"
+PORT="${CLAWD_PORT:-$(bash "$(dirname "$0")/clawd-port.sh")}"
 LOCK="/tmp/clawd-serial.lock"
 LOG="${CLAWD_LOG:-/tmp/clawd-events.log}"
 EV="$1"
@@ -16,7 +18,7 @@ EV="$1"
 logline() { echo "[$(date '+%H:%M:%S')] $EV -> $1" >> "$LOG" 2>/dev/null; }
 
 [ -z "$EV" ] && exit 0
-[ -e "$PORT" ] || { logline "skip (no device)"; exit 0; }
+[ -n "$PORT" ] && [ -e "$PORT" ] || { logline "skip (no device)"; exit 0; }
 
 {
     flock -w 2 9 || { logline "skip (lock busy)"; exit 0; }

@@ -37,7 +37,7 @@ pixel-art Clawd splash.*
 | Audio codec | **ES8311** + **NS4150B** amp + integrated speaker | I²C @ 0x18; I²S MCLK=12 BCLK=13 LRCK=15 DOUT=16 |
 | IMU | **QMI8658** | I²C @ 0x6B (initialised, unused) |
 | Shared I²C | — | **SDA=8, SCL=7** |
-| Power/USB | USB-C (USB-JTAG/serial), `/dev/ttyACM0` | — |
+| Power/USB | USB-C (USB-JTAG/serial), USB serial `1C:DB:D4:79:7F:3C` → `/dev/serial/by-id/…_1C:DB:D4:79:7F:3C-if00` | — |
 
 **No Bluetooth and no physical buttons are used** — both were removed. The only
 input is the touchscreen (tap toggles the splash animation ↔ the dashboard).
@@ -64,7 +64,7 @@ input is the touchscreen (tap toggles the splash animation ↔ the dashboard).
                                                 └──────────────────────────┘
 ```
 
-- **Transport:** USB serial (`/dev/ttyACM0`), newline-delimited JSON. No BLE.
+- **Transport:** USB serial (board found by its USB serial number via `daemon/clawd-port.sh`, never `/dev/ttyACM0`), newline-delimited JSON. No BLE.
 - **Usage:** `claude-usage-serial.py` POSTs a minimal request to
   `https://api.anthropic.com/v1/messages` and reads the
   `anthropic-ratelimit-unified-5h/7d-*` response headers, every 60 s. Token is
@@ -109,13 +109,23 @@ input is the touchscreen (tap toggles the splash animation ↔ the dashboard).
 In a **Windows Administrator PowerShell**:
 
 ```powershell
-usbipd list                                   # find the ESP32-S3 (VID 303a:1001), note BUSID
+usbipd state | ConvertFrom-Json | % Devices | ? InstanceId -like '*\1C:DB:D4:79:7F:3C' |
+    Select BusId, InstanceId                  # OUR board, by serial -> its BUSID
 usbipd bind   --busid <BUSID>                 # one-time (persists)
 usbipd attach --wsl <Distro> --busid <BUSID>  # re-run after every replug/reboot
 ```
 
 `<Distro>` is your WSL distribution (e.g. `Ubuntu-24.04`). Confirm in WSL2:
-`ls /dev/ttyACM0`.
+`daemon/clawd-port.sh` (prints `/dev/serial/by-id/..._1C:DB:D4:79:7F:3C-if00`).
+
+> **Other ESP32 boards on this machine.** Pick the board by its USB serial
+> `1C:DB:D4:79:7F:3C` (the end of its `usbipd state` InstanceId), **never** by
+> VID:PID `303a:1001` or by `/dev/ttyACM0`: every ESP32-S3 in USB-JTAG mode is
+> `303a:1001` (hidprj's keyboard/mouse board — which must stay on Windows — and
+> its radio dongle too), and whichever board enumerates first gets `ttyACM0`.
+> Everything in this repo (daemon, hook, `flash.sh`, `screenshot.sh`, the
+> auto-attach task) resolves the board through `CLAWD_SERIAL` and waits/aborts
+> if it's absent. See `HIDPRJ-COEXISTENCE.md`.
 
 **Recommended — auto-attach (no more manual re-attach).** The ESP32-S3 USB-JTAG
 re-enumerates on every flash and every reboot, so the manual `attach` above is
@@ -143,17 +153,20 @@ powershell -ExecutionPolicy Bypass -File .\usbipd-autoattach.ps1 `
   admin account that registered it. On a personal machine where you're already
   a local admin you can omit it.
 - `-Distribution` defaults to `Ubuntu-24.04`. Pass the name `wsl -l -q` shows.
-- `-HardwareId 303a:1001` is the default for the Cmeter3.5 board; override for
-  other board revisions.
+- `-Serial 1C:DB:D4:79:7F:3C` is the default (the Cmeter3.5 board); pass the
+  new serial if the board is ever replaced.
 - `.\usbipd-autoattach.ps1 -Remove` tears the Scheduled Task down.
 
 What the script does, once:
 
-1. `usbipd bind --busid <id>` — persists the share for VID 303a:1001.
+1. `usbipd bind --busid <id>` — persists the share for **this board only**
+   (busid looked up from the serial in `usbipd state`).
 2. Registers Scheduled Task `usbipd-esp32`, runs **at logon as `-RunAsUser`**,
-   action = a PowerShell loop that wakes WSL (`wsl -d <Distro> -- true`) and
-   then runs `usbipd attach --wsl <Distro> --hardware-id 303a:1001 --auto-attach`
-   (which itself blocks and re-attaches forever).
+   action = a PowerShell loop that every 5 s reads `usbipd state`, finds the
+   board by serial, and — if it is plugged in, shared and not attached — wakes
+   WSL (`wsl -d <Distro> -- true`) and runs `usbipd attach --wsl <Distro>
+   --busid <its current busid>`. (No `--auto-attach`: it can only pin a busid,
+   which changes between ports, or a hardware-id, which matches other boards.)
 
 After this: replug → auto-reattaches; reflash → same (USB-JTAG re-enumerates);
 reboot/logon → the task restarts the watcher. You never touch `usbipd attach`
@@ -163,8 +176,12 @@ by hand again.
 
 ```bash
 ./.piovenv/bin/pio run -d firmware
-./.piovenv/bin/pio run -d firmware -t upload --upload-port /dev/ttyACM0
+./flash.sh      # = pio upload to the board found by serial; stops/restarts the daemon
 ```
+
+Never flash with `--upload-port /dev/ttyACM0` or pio's auto-detect: on a
+machine with other ESP32 boards attached that can overwrite *their* firmware.
+`flash.sh` refuses to run if the board isn't attached.
 
 On boot you should hear a two-tone **self-test beep** and see the **Usage**
 dashboard (dashes until the daemon feeds it).
@@ -202,9 +219,13 @@ systemctl --user restart clawd-usage.service
 
 Run **either** the `nohup` form **or** the service, not both (two pollers
 double-write the port — the service is the keeper). `Restart=always` brings it
-back if it crashes; it rides out `/dev/ttyACM0` coming and going with usbipd.
+back if it crashes; it rides out the port coming and going with usbipd.
 
-Stdlib-only (no pip deps). `PORT=/dev/ttyACM0 POLL=60` are overridable via env.
+Stdlib-only (no pip deps). `PORT=... POLL=60` are overridable via env.
+
+> **Superseded:** this usage-only daemon still uses `/dev/ttyACM0` and a
+> hardware-id heal, so it now refuses to start. Use the combined daemon
+> (§8.5), which selects the board by serial.
 
 ### 3.5 Enable Claude-session event notifications
 
@@ -262,7 +283,7 @@ Tap the screen to toggle the **splash creature** ↔ the **usage dashboard**.
 
 | Symptom | Cause / fix |
 |---|---|
-| No `/dev/ttyACM0` (usage stops updating) | usbipd detached (replug/reboot/flash re-enumerated the device). One-off fix: `usbipd attach --wsl <Distro> --busid <BUSID>` (Windows admin PS). Permanent fix: run `usbipd-autoattach.ps1` once (§3.2). Then restart the daemon (next row). |
+| `daemon/clawd-port.sh` prints nothing (usage stops updating) | usbipd detached (replug/reboot/flash re-enumerated the device). One-off fix: `usbipd attach --wsl <Distro> --busid <BUSID>` (Windows admin PS). Permanent fix: run `usbipd-autoattach.ps1` once (§3.2). Then restart the daemon (next row). |
 | Daemon logs `PermissionError(13)` (or `FileNotFoundError`) every poll after a replug; usbipd shows the device `Shared` but not `Attached` | The logon task's `--auto-attach` watcher died, so the replug never reached WSL. The combined daemon self-heals this (detach→reattach on any serial-write `OSError`) within one poll — check its journal for `heal:` lines. If heal is off/failing: one-off `usbipd attach --wsl <Distro> --busid <BUSID>` (non-elevated user PS), and check `heal=on` + a valid `usbipd=` path in the daemon's startup log line. |
 | Auto-attach Scheduled Task is `Running` but `/dev/ttyACM0` never appears | Task is executing under the wrong user account (typical on AD/corp machines where UAC elevates to a different admin account). WSL2 distros are per-user, so the task can't reach yours. Re-run `usbipd-autoattach.ps1 -RunAsUser "<domain>\<your-user>"` (§3.2). Verify with `(Get-ScheduledTask usbipd-esp32).Principal.UserId` — must match the account that owns the WSL distro. |
 | After reboot/logon, task says `State: Running` but `LastRunTime` is stale (days old) and busid stays `Shared` | The AtLogOn trigger didn't fire — on AD machines the logon-event principal can be reported as SID / UPN / `DOMAIN\user` variants, and a trigger `-User` filter that string-matches one variant silently fails for the others. The bundled script now omits `-User` from the trigger; if you have an older registered task, re-run `usbipd-autoattach.ps1 -RunAsUser "<domain>\<your-user>"` to overwrite it. One-shot recovery (no re-register needed): `Stop-ScheduledTask usbipd-esp32; Start-ScheduledTask usbipd-esp32` in an Admin PS. |
@@ -331,13 +352,17 @@ the device **auto-rotates with the usage screen** (every 30 s; tap to advance).
   the FAM web app(s) so the board is viewable in-app.
 - **`daemon/clawd-combined-serial.py`** — feeds BOTH Claude usage and the status
   board to the device over the one USB-serial link (so two daemons never fight
-  over `/dev/ttyACM0`). Includes the same **usbipd self-heal** as the old usage
-  daemon: any `OSError` on the serial write (port missing, `PermissionError`/
-  EACCES, dead USB-over-IP link) triggers a cooldown-guarded
-  `usbipd detach` → one-shot `attach` → wait-for-stable-port cycle, then one
-  retry. Network errors never trigger it. `HEAL=0` disables; `USBIPD_EXE`,
-  `USBIPD_WSL_DISTRO`, `USBIPD_HWID`, `HEAL_COOLDOWN` override. Startup log
-  shows `heal=on usbipd=<path>`.
+  over the port). The board is found by its USB serial (`CLAWD_SERIAL`,
+  default `1C:DB:D4:79:7F:3C`) under `/dev/serial/by-id/`, re-resolved on
+  every open; if it's absent the daemon logs `waiting: board ... not plugged
+  in` once and opens nothing. **usbipd self-heal**: a missing port or any
+  `OSError` on the serial write (`PermissionError`/EACCES, dead USB-over-IP
+  link) triggers a cooldown-guarded heal that looks the board up in `usbipd
+  state` by serial and — only if it is plugged in and shared — runs `usbipd
+  detach`/`attach --busid <its busid>` and waits for a stable port, then one
+  retry. Never `--hardware-id`. Network errors never trigger it. `HEAL=0`
+  disables; `USBIPD_EXE`, `USBIPD_WSL_DISTRO`, `HEAL_COOLDOWN` override.
+  Startup log shows `board=<serial> port=<path|absent> heal=on`.
 - **Firmware** — `SCREEN_STATUS` renders the dot grid; rotation + tap live in
   `ui.cpp` / `main.cpp`, gated by `CLAWD_STATUS_SCREEN` (see 8.4).
 

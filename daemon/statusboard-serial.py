@@ -25,11 +25,18 @@ import fcntl
 import json
 import os
 import sys
+from pathlib import Path
 import time
 import urllib.request
 
 LOCK_PATH = "/tmp/clawd-serial.lock"
 
+# SUPERSEDED + UNSAFE on a machine with other ESP32 boards: this script picks
+# /dev/ttyACM0 (and, in the usage daemon, usbipd --hardware-id 303a:1001),
+# which can be hidprj's boards. Use clawd-combined-serial.py, which selects
+# the board by USB serial. See HIDPRJ-COEXISTENCE.md.
+sys.exit(f"{Path(__file__).name} is superseded by clawd-combined-serial.py "
+         "(board selected by USB serial) - refusing to run.")
 PORT = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("PORT", "/dev/ttyACM0")
 POLL = int(os.environ.get("POLL", "30"))
 STATUS_URL = os.environ.get("STATUS_URL", "http://localhost:3004/status.json")

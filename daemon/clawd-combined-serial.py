@@ -9,7 +9,9 @@ Each cycle it sends two newline-delimited lines:
   {"sb":[{"n":"fam","s":1},...],"ok":16,"down":2,"unk":0}  # status
 
 Stdlib only. Env:
-  PORT=/dev/ttyACM0  POLL=30
+  CLAWD_SERIAL=1C:DB:D4:79:7F:3C  (the board's USB serial — the ONLY device
+      this daemon opens or usbipd-attaches; see find_port())
+  PORT=/dev/...  explicit port override (debug only)   POLL=30
   STATUS_URL=http://10.136.128.10:3004/status.json   (dt42 feed)
   DRY=1  -> print payloads, don't write serial
 """
@@ -29,19 +31,24 @@ import urllib.error
 from pathlib import Path
 
 LOCK_PATH = "/tmp/clawd-serial.lock"
-PORT = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("PORT", "/dev/ttyACM0")
+# The board is identified by its USB serial number, NEVER by /dev/ttyACM0 or
+# VID:PID 303a:1001: other ESP32-S3 / CH343 boards on this machine (hidprj's
+# HID board + radio dongle) enumerate as the same ttyACM names and the same
+# 303a:1001, and writing to / usbipd-grabbing them breaks them. If the board
+# is absent we wait — no fallback to any other tty.
+CLAWD_SERIAL = os.environ.get("CLAWD_SERIAL", "1C:DB:D4:79:7F:3C")
+PORT_OVERRIDE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("PORT")
 POLL = int(os.environ.get("POLL", "30"))
 STATUS_URL = os.environ.get("STATUS_URL", "http://10.136.128.10:3004/status.json")
 DRY = bool(os.environ.get("DRY"))
 
-# --- usbipd self-heal (WSL2), same scheme as claude-usage-serial.py ----------
-# The logon task's `usbipd attach --auto-attach` watcher can silently die; a
-# later replug then never reaches WSL (/dev/ttyACM0 missing, or present but
-# unwritable -> EACCES). Any OSError from the *serial write* — including
-# FileNotFoundError and PermissionError — triggers a detach->reattach cycle.
+# --- usbipd self-heal (WSL2) -------------------------------------------------
+# The logon attach watcher can silently die; a later replug then never reaches
+# WSL (port missing, or present but unwritable -> EACCES). A missing port or
+# any OSError from the *serial write* triggers a detach->reattach of OUR board
+# only — resolved by serial to its current busid (see usbipd_board()).
 # Network errors never do. Disable with HEAL=0.
 HEAL = os.environ.get("HEAL", "1").lower() not in ("0", "", "false", "no")
-USBIPD_HWID = os.environ.get("USBIPD_HWID", "303a:1001")
 USBIPD_WSL_DISTRO = (os.environ.get("USBIPD_WSL_DISTRO")
                      or os.environ.get("WSL_DISTRO_NAME") or "Ubuntu-24.04")
 HEAL_COOLDOWN = int(os.environ.get("HEAL_COOLDOWN", "45"))  # min s between heals
@@ -59,6 +66,20 @@ def find_usbipd():
 
 
 USBIPD = find_usbipd()
+
+
+def find_port():
+    """The board's tty, or None. /dev/serial/by-id names embed the USB serial
+    (usb-Espressif_USB_JTAG_serial_debug_unit_<serial>-if00), so this can
+    only ever match our board. Re-resolved on every open."""
+    if PORT_OVERRIDE:
+        return PORT_OVERRIDE if os.path.exists(PORT_OVERRIDE) else None
+    hits = sorted(Path("/dev/serial/by-id").glob(f"*_{CLAWD_SERIAL}-if*"))
+    return str(hits[0]) if hits else None
+
+
+class NoDevice(FileNotFoundError):
+    """Board not attached to WSL (an OSError, so it feeds the heal path)."""
 
 
 def find_herdr():
@@ -450,6 +471,8 @@ def _herd_watch_once():
                 try:
                     send(p)
                     log(f"herd event -> sent ({len(p)}B){' +show' if show else ''}")
+                except NoDevice:
+                    pass  # board unplugged: the main loop logs "waiting" once
                 except OSError as e:
                     log(f"herd event send failed: {e!r}")  # 30s loop will heal
     finally:
@@ -495,7 +518,11 @@ def serial_reader():
             if os.path.exists(PAUSE_PATH):
                 time.sleep(0.5)
                 continue
-            fd = os.open(PORT, os.O_RDONLY | os.O_NOCTTY)
+            port = find_port()
+            if not port:
+                time.sleep(3)
+                continue
+            fd = os.open(port, os.O_RDONLY | os.O_NOCTTY)
             try:
                 buf = b""
                 while not os.path.exists(PAUSE_PATH):
@@ -589,11 +616,14 @@ def send(line):
     if DRY:
         log(f"would send ({len(line)}B): {line[:80]}...")
         return
-    configure_port(PORT)
+    port = find_port()
+    if not port:
+        raise NoDevice(f"board {CLAWD_SERIAL} not attached")
+    configure_port(port)
     with open(LOCK_PATH, "w") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
         try:
-            with open(PORT, "wb", buffering=0) as fp:
+            with open(port, "wb", buffering=0) as fp:
                 fp.write(line.encode() + b"\n")
         finally:
             fcntl.flock(lk, fcntl.LOCK_UN)
@@ -607,16 +637,16 @@ def _run(cmd, timeout=30):
         return -1, repr(e)
 
 
-def wait_stable(path, appear=15, stable=4):
-    """Wait for `path` to appear and then persist `stable`s (ride out the
-    -104 reset burst that follows a fresh attach)."""
+def wait_stable(appear=15, stable=4):
+    """Wait for the board's port to appear and then persist `stable`s (ride
+    out the -104 reset burst that follows a fresh attach)."""
     deadline = time.time() + appear
     while time.time() < deadline:
-        if os.path.exists(path):
+        if find_port():
             ok = True
             for _ in range(stable):
                 time.sleep(1)
-                if not os.path.exists(path):
+                if not find_port():
                     ok = False
                     break
             if ok:
@@ -625,31 +655,72 @@ def wait_stable(path, appear=15, stable=4):
     return False
 
 
+_last_note = None
+
+
+def note(msg):
+    """Log `msg` only when it differs from the previous note, so a board
+    that stays unplugged logs once instead of every poll."""
+    global _last_note
+    if msg != _last_note:
+        log(msg)
+        _last_note = msg
+
+
+def usbipd_board():
+    """Our board's entry in `usbipd state` (matched by InstanceId serial), or
+    None. Never select by --hardware-id 303a:1001: that also matches hidprj's
+    boards, which must stay on Windows."""
+    rc, out = _run([USBIPD, "state"])
+    if rc != 0:
+        note(f"heal: usbipd state rc={rc} {out[:120]}")
+        return None
+    try:
+        devs = json.loads(out).get("Devices", [])
+    except ValueError:
+        return None
+    suffix = "\\" + CLAWD_SERIAL.upper()
+    for d in devs:
+        if str(d.get("InstanceId", "")).upper().endswith(suffix):
+            return d
+    return None
+
+
 def reattach():
-    """usbipd detach->reattach, then wait for a stable port. Cooldown-guarded
-    so a genuinely-unplugged device doesn't get hammered every poll."""
+    """usbipd detach->reattach of OUR board (by busid resolved from its serial),
+    then wait for a stable port. Cooldown-guarded so a genuinely-unplugged
+    device doesn't get hammered every poll."""
     global _last_heal
-    if not HEAL:
+    if not HEAL or PORT_OVERRIDE:
         return False
     if not USBIPD:
-        log("heal: usbipd.exe not found (set USBIPD_EXE) — cannot self-heal")
+        note("heal: usbipd.exe not found (set USBIPD_EXE) — cannot self-heal")
         return False
     now = time.time()
     if now - _last_heal < HEAL_COOLDOWN:
         return False
     _last_heal = now
-    log(f"heal: usbipd detach/reattach {USBIPD_HWID} -> {USBIPD_WSL_DISTRO}")
-    _run([USBIPD, "detach", "--hardware-id", USBIPD_HWID])
-    time.sleep(2)
+    d = usbipd_board()
+    bus = d and d.get("BusId")
+    if not bus:
+        note(f"waiting: board {CLAWD_SERIAL} not plugged in (no other tty is used)")
+        return False
+    if not d.get("PersistedGuid"):
+        note(f"heal: board {CLAWD_SERIAL} (busid {bus}) is not shared — run once in an "
+             f"admin PowerShell: usbipd bind --busid {bus}")
+        return False
+    log(f"heal: usbipd detach/reattach busid {bus} ({CLAWD_SERIAL}) -> {USBIPD_WSL_DISTRO}")
+    if d.get("ClientIPAddress"):
+        _run([USBIPD, "detach", "--busid", bus])
+        time.sleep(2)
     # One-shot attach (no --auto-attach: that flag blocks forever).
-    rc, out = _run([USBIPD, "attach", "--wsl", USBIPD_WSL_DISTRO,
-                    "--hardware-id", USBIPD_HWID])
+    rc, out = _run([USBIPD, "attach", "--wsl", USBIPD_WSL_DISTRO, "--busid", bus])
     if rc != 0:
         log(f"heal: attach rc={rc} {out[:200]}")
-    if wait_stable(PORT):
-        log(f"heal: {PORT} back and stable")
+    if wait_stable():
+        note(f"heal: board back and stable at {find_port()}")
         return True
-    log(f"heal: {PORT} did not come back (device unplugged/powered off?)")
+    log("heal: board did not come back (unplugged/powered off?)")
     return False
 
 
@@ -659,8 +730,13 @@ def send_healing(line):
     try:
         send(line)
         return True
+    except NoDevice:
+        if reattach():
+            send(line)
+            return True
+        return False
     except OSError as e:
-        log(f"{PORT} write failed ({e!r}) — attempting usbipd reattach")
+        log(f"{find_port() or CLAWD_SERIAL} write failed ({e!r}) — attempting usbipd reattach")
         if reattach():
             send(line)  # let a second failure surface to the caller's log
             return True
@@ -668,7 +744,7 @@ def send_healing(line):
 
 
 def main():
-    log(f"port={PORT} poll={POLL}s status_url={STATUS_URL} dry={DRY} "
+    log(f"board={CLAWD_SERIAL} port={PORT_OVERRIDE or find_port() or 'absent'} poll={POLL}s status_url={STATUS_URL} dry={DRY} "
         f"heal={'on' if (HEAL and USBIPD) else 'off'} usbipd={USBIPD} "
         f"herdr={HERDR or 'off'} herd_show={','.join(sorted(HERD_SHOW))}")
     if HERDR and not DRY:

@@ -96,13 +96,13 @@ hooks, troubleshooting, sound regeneration, history) is in **[`DOCUMENTATION.md`
 ```bash
 # build + flash (PlatformIO venv at repo root)
 ./.piovenv/bin/pio run -d firmware
-./.piovenv/bin/pio run -d firmware -t upload --upload-port /dev/ttyACM0
+./flash.sh   # finds the board by USB serial, never /dev/ttyACM0
 
-# run the usage daemon (WSL2; device attached via usbipd).
+# run the daemon (WSL2; board attached via usbipd, selected by serial).
 # In practice this is wired as a systemd-user unit + a Windows
-# Scheduled Task -- see DOCUMENTATION.md sections 3.2 / 3.4 for
+# Scheduled Task -- see DOCUMENTATION.md sections 3.2 / 8.5 for
 # the hands-off (survives reboot/replug/reflash) setup.
-nohup python3 daemon/claude-usage-serial.py /dev/ttyACM0 >/tmp/claude-usage.log 2>&1 &
+python3 daemon/clawd-combined-serial.py
 ```
 
 Claude-event hooks are configured in `~/.claude/settings.json`
